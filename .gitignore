@@ -3,3 +3,6 @@ dist
 .DS_Store
 *.log
 __pycache__
+
+# test files for the windows (tools/NOTES.md): anything in public/media/ that starts with an underscore
+public/media/_*

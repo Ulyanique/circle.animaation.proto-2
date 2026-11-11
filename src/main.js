@@ -3,6 +3,7 @@
 import { Stage } from './core/stage.js';
 import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame } from './core/util.js';
 import { loadAssets } from './core/assets.js';
+import { syncVideos, finishSlots } from './core/slots.js';
 import { buildShots, linkShots, FOOTAGE } from './shots/index.js';
 import { makeHero } from './fx/hero.js';
 
@@ -38,6 +39,7 @@ const HERO_FLARE = 0.5;      // strength of the lens flare on the hero light
 const player = {
   time: 0,
   playing: false,
+  speed: 1,      // how fast `time` runs against the wall clock: 1, unless frames take over 100 ms (see the clock below)
   sound: false,
   shots: [],
   links: [],
@@ -53,6 +55,7 @@ const player = {
   /** Render the frame for a given (fractional, 1-based) video frame number. */
   renderAt(f) {
     f = clamp(f, 1, LAST_FRAME);
+    syncVideos(f, this.playing, this.speed);      // videos in the windows run on the film's clock
     const shot = this.shotAt(f);
     if (shot !== this.current) {
       if (this.current) this.current.group.visible = false;
@@ -114,17 +117,20 @@ const player = {
   seek(t) {
     this.time = clamp(t, 0, DURATION);
     if (this.audio) this.audio.currentTime = this.time;
+    rememberFrame();
   },
 
   play() {
     if (this.time >= DURATION - 1e-3) this.seek(0);
     this.playing = true;
     if (this.audio && this.sound) { this.audio.currentTime = this.time; this.audio.play().catch(() => {}); }
+    rememberFrame();
   },
 
   pause() {
     this.playing = false;
     this.audio?.pause();
+    rememberFrame();
   },
 
   toggle() { this.playing ? this.pause() : this.play(); },
@@ -139,6 +145,20 @@ const player = {
 };
 window.__player = player;
 window.__stage = stage;
+
+// Dev server only: a paused film keeps its frame in the address (?f=…&paused), so the page comes back to the same
+// picture when it reloads after an edit — that is how the media in the windows is placed (src/media.js).
+let remembering = 0;
+function rememberFrame() {
+  if (!import.meta.env.DEV || window.__manual) return;
+  clearTimeout(remembering);
+  remembering = setTimeout(() => {      // once things settle: browsers limit how often the address may change
+    const rest = location.search.slice(1).split('&').filter((q) => q && !/^(f|t|paused)(=|$)/.test(q));
+    const q = (player.playing ? rest : [`f=${Math.round(timeToFrame(player.time))}`, 'paused', ...rest]).join('&');
+    const url = location.pathname + (q ? '?' + q : '') + location.hash;
+    if (url !== location.pathname + location.search + location.hash) try { history.replaceState(null, '', url); } catch { /* the address is a convenience */ }
+  }, 250);
+}
 
 // Render resolution: the device's own pixels, up to 3072x1728 (a 14-16" retina display in full screen). The footage
 // stills come from a 720p source, but the shards, the light and the title are drawn, so they do gain from every
@@ -195,6 +215,7 @@ setScope(scope);
 loadAssets(FOOTAGE).then((assets) => {
   player.shots = buildShots(assets, stage);
   player.links = linkShots(player.shots);
+  finishSlots(player.links);      // what each window shows of itself is known only now, with the flights linked
   for (const s of player.shots) stage.scene.add(s.group);
   player.audio = assets.audio;
   if (player.audio) player.audio.preservesPitch = false;      // tiny rate trims must not go through a time-stretcher
@@ -237,6 +258,7 @@ loadAssets(FOOTAGE).then((assets) => {
     last = now;
     if (player.playing) {
       player.time += dt;
+      player.speed += ((raw > 0 ? dt / raw : 1) - player.speed) * (1 - Math.exp(-raw / 0.3));
       const a = player.audio;
       if (a && player.sound && !a.paused && a.readyState >= 2 && !a.seeking) {
         const d = a.currentTime - player.time;

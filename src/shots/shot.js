@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { track, param, rgb255, VIDEO_W, VIDEO_H, clamp, smoother } from '../core/util.js';
 import { ShardBuilder, makeShardMaterial, makeSoftMaterial } from '../fx/shards.js';
+import { registerSlot } from '../core/slots.js';
 import { makeDust } from '../fx/dust.js';
 
 const _m4 = new THREE.Matrix4();
@@ -155,6 +156,47 @@ function easedRamp(v) {
   return v.map((k, i) => [k[0], k[1], n === 1 ? 'smooth' : i === 0 ? 'in' : i === n - 1 ? 'out' : 'linear']);
 }
 
+function inPolygon(pts, x, y) {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a[1] > y) !== (b[1] > y) && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) c = !c;
+  }
+  return c;
+}
+
+/**
+ * The part [u0, u1, v0, v1] of a window (`polys`: its facets in the screen's own uv; `at(u, v)`: world point) that is
+ * ever inside the picture during frames f0…f1. The camera often flies so close that a window is never seen whole, and
+ * what stays outside the picture should not take up room in the media laid over the window.
+ */
+function seenPart(polys, at, rig, f0, f1) {
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (const p of polys) for (const [u, v] of p) { u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+  if (!(u1 > u0) || !(v1 > v0)) return [0, 1, 0, 1];
+  const N = 48, du = (u1 - u0) / N, dv = (v1 - v0) / N, M = 24, px = { x: 0, y: 0 };
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+  for (let iy = 0; iy < N; iy++) {
+    for (let ix = 0; ix < N; ix++) {
+      const u = u0 + (ix + 0.5) * du, v = v0 + (iy + 0.5) * dv;
+      if (u >= a0 && u <= a1 && v >= b0 && v <= b1) continue;      // would not widen the answer
+      if (!polys.some((p) => inPolygon(p, u, v))) continue;
+      const w = at(u, v);
+      for (let f = f0; ; f = Math.min(f + 2, f1)) {
+        rig.project(f, w, px);
+        if (px.x > -M && px.x < VIDEO_W + M && px.y > -M && px.y < VIDEO_H + M) {
+          a0 = Math.min(a0, u); a1 = Math.max(a1, u); b0 = Math.min(b0, v); b1 = Math.max(b1, v);
+          break;
+        }
+        if (f >= f1) break;
+      }
+    }
+  }
+  if (!(a1 >= a0)) return [u0, u1, v0, v1];
+  // from the centres of the grid cells to their edges, plus one cell of caution; never past the window itself
+  return [Math.max(u0, a0 - 1.5 * du), Math.min(u1, a1 + 1.5 * du), Math.max(v0, b0 - 1.5 * dv), Math.min(v1, b1 + 1.5 * dv)];
+}
+
 export function makeShot(def, data, assets) {
   const id = def.id || data.id;
   const range = def.range || data.range;
@@ -234,11 +276,76 @@ export function makeShot(def, data, assets) {
     U.uScrU.value[i].fromArray(s.u);
     U.uScrV.value[i].fromArray(s.v);
     const tex = assets.footage[sd.tex || s.name];
-    if (tex) { U[i === 0 ? 'uTexA' : 'uTexB'].value = tex; U.uTexel.value[i].set(1 / tex.image.width, 1 / tex.image.height); }
+    const media = tex?.userData.media || null;      // a photo / video of the user's own (src/media.js) instead of the still
+    if (tex) {
+      U[i === 0 ? 'uTexA' : 'uTexB'].value = tex;
+      U.uTexel.value[i].set(1 / (media ? media.width : tex.image.width), 1 / (media ? media.height : tex.image.height));
+    }
+    // The window as a slot (core/slots.js): custom media is laid over the part of the window that the picture ever
+    // shows, so that part takes the place of the screen rectangle.
+    const O = new THREE.Vector3().fromArray(s.o), Ux = new THREE.Vector3().fromArray(s.u), Vy = new THREE.Vector3().fromArray(s.v);
+    const q = new THREE.Vector3();
+    const polys = data.polys.filter((p) => p.screen === i + 1)
+      .map((p) => p.v.map((a) => { q.set(a[0], a[1], a[2]).sub(O); return [q.dot(Ux) / Ux.lengthSq(), q.dot(Vy) / Vy.lengthSq()]; }));
+    const at = (u, v) => [O.x + Ux.x * u + Vy.x * v, O.y + Ux.y * u + Vy.y * v, O.z + Ux.z * u + Vy.z * v];
+    // the window is "on" from the frame its picture starts to show (videos and `to` moves count from there)
+    const reveal = param(easedRamp(sd.reveal ?? 1));
+    let shown = range[0];
+    while (shown < range[1] && reveal(shown) < 0.02) shown++;
+    const fit = registerSlot(s.name, [shown, range[1]], i === 0, media, {
+      span: range,
+      // asked for once every shot is built and linked (the hand-over to a linked neighbour changes the flight);
+      // `pre`, `post`: frames this shot is also drawn before and after its own range, in the dissolves at linked borders
+      part: (pre, post) => seenPart(polys, at, rig, shown > range[0] ? Math.max(range[0] - pre, shown - 2) : range[0] - pre, range[1] + post),
+      // frames [first, last] of this shot at which the window, with its picture on, is in the frame at all
+      // (rays from a grid of picture points to the window's plane), or null
+      frames: () => {
+        const n = new THREE.Vector3().crossVectors(Ux, Vy), w = new THREE.Vector3();
+        const seen = (f) => {
+          const c = rig.pose(f);
+          const h = (O.x - c[0]) * n.x + (O.y - c[1]) * n.y + (O.z - c[2]) * n.z;
+          for (let y = 30; y < VIDEO_H; y += 60) {
+            for (let x = 40; x < VIDEO_W; x += 80) {
+              rig.unproject(f, x, y, 1, w);
+              w.x -= c[0]; w.y -= c[1]; w.z -= c[2];
+              const t = h / w.dot(n);
+              if (!(t > 0) || !Number.isFinite(t)) continue;
+              q.set(c[0] + w.x * t, c[1] + w.y * t, c[2] + w.z * t).sub(O);
+              const u = q.dot(Ux) / Ux.lengthSq(), v = q.dot(Vy) / Vy.lengthSq();
+              if (polys.some((p) => inPolygon(p, u, v))) return true;
+            }
+          }
+          return false;
+        };
+        let a = shown, b = range[1];
+        while (a <= b && !seen(a)) a++;
+        while (b > a && !seen(b)) b--;
+        return a <= b ? [a, b] : null;
+      },
+      shape: (b) => (Ux.length() * (b[1] - b[0])) / (Vy.length() * (b[3] - b[2])),
+      tilt: () => {      // how far the window's x axis is turned on the screen in the middle of the shot, degrees clockwise
+        const fm = (range[0] + range[1]) / 2, a = rig.project(fm, at(0.5, 0.5), {}), b = rig.project(fm, at(0.55, 0.5), {});
+        return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+      },
+      apply: (b) => {
+        U.uScrO.value[i].copy(O).addScaledVector(Ux, b[0]).addScaledVector(Vy, b[2]);
+        U.uScrU.value[i].copy(Ux).multiplyScalar(b[1] - b[0]);
+        U.uScrV.value[i].copy(Vy).multiplyScalar(b[3] - b[2]);
+      },
+    });
+    if (fit) {
+      U.uScrOwn.value[i] = media.kind === 'video' ? 2 : 1;
+      U.uScrFixed.value[i] = fit.fixed ? 1 : 0;
+      // the unsharp mask is there for the placeholder stills (upscaled 720p frames); a photo of the user's own is
+      // shown as it is, unless its line in media.js asks for some (`sharpen`)
+      U.uSharp.value[i] = clamp(Number(media.cfg.sharpen) || 0, 0, 1.5);
+    }
     // the footage glides inside its facet: per-frame uv transform [a, b, c, d, tx, ty] measured by tools/uvtrack.py
-    const uv = sd.uv === false || !s.uv ? null : track(s.uv.rows.map((r, k) => [s.uv.f0 + k, r]), 'spline', true);
+    // (it belongs to the placeholder still; custom media has its own `to` move)
+    const uv = fit || sd.uv === false || !s.uv ? null : track(s.uv.rows.map((r, k) => [s.uv.f0 + k, r]), 'spline', true);
     return {
-      reveal: param(easedRamp(sd.reveal ?? 1)),
+      fit,
+      reveal,
       sepia: param(sd.sepia ?? 0),
       gain: param(sd.gain ?? 1),
       scroll: param(sd.scroll ?? 0),
@@ -299,8 +406,9 @@ export function makeShot(def, data, assets) {
       if (softMesh) softMesh.material.uniforms.uLevel.value = level(f);
       U.uGlowLevel.value = glow(f);
       screens.forEach((s, i) => {
-        U.uScrMix.value[i].set(s.reveal(f), s.sepia(f), s.gain(f), s.scroll(f));
-        if (s.uv) { const m = s.uv(f); U.uScrA.value[i].set(m[0], m[1], m[2], m[3]); U.uScrT.value[i].set(m[4], m[5]); }
+        U.uScrMix.value[i].set(s.reveal(f), s.sepia(f), s.gain(f), s.fit ? 0 : s.scroll(f));
+        const m = s.fit ? s.fit(f) : s.uv ? s.uv(f) : null;
+        if (m) { U.uScrA.value[i].set(m[0], m[1], m[2], m[3]); U.uScrT.value[i].set(m[4], m[5]); }
       });
       res.set(stage.width, stage.height);
       if (dust) {

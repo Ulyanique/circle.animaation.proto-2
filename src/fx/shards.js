@@ -242,6 +242,7 @@ varying vec3 vNormal;
 varying vec3 vColor;
 varying float vGlow;
 varying float vScreen;
+varying vec3 vClip;          // clip-space x, y, w: where the fragment is in the picture
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorld = wp.xyz;
@@ -250,6 +251,7 @@ void main() {
   vGlow = aGlow;
   vScreen = aScreen;
   gl_Position = projectionMatrix * viewMatrix * wp;
+  vClip = gl_Position.xyw;
 }`;
 
 const FRAG = /* glsl */ `
@@ -259,6 +261,7 @@ varying vec3 vNormal;
 varying vec3 vColor;
 varying float vGlow;
 varying float vScreen;
+varying vec3 vClip;          // clip-space x, y, w: where the fragment is in the picture
 
 uniform float uOpacity;
 uniform float uLevel;        // overall light level of the gold
@@ -282,22 +285,35 @@ uniform vec4 uScrA[2];       // footage moving inside its facet: texture uv = ma
 uniform vec2 uScrT[2];
 uniform vec3 uSepia;
 uniform vec2 uTexel[2];      // size of one texel of each footage still
-uniform float uSharp;        // unsharp mask on the footage (the stills come from a 720p source)
+uniform float uSharp[2];     // unsharp mask on the footage, per screen (the stills come from a 720p source)
+uniform float uScrOwn[2];    // 0: placeholder still, 1: a photo of the user's own (src/media.js), 2: a video
+uniform float uScrFixed[2];  // 1: own media is fixed to the picture and the window is a cut-out over it (fixed: true in media.js)
+
+// Photos are decoded from sRGB by the GPU. Video frames are not — three.js uploads them as plain RGBA8 (an sRGB upload
+// of a video frame is slow in browsers) and leaves the decoding to the shader.
+vec3 texel(int i, sampler2D tex, vec2 uv) {
+  vec3 c = texture2D(tex, uv).rgb;
+  if (uScrOwn[i] > 1.5) c = mix(pow(c * 0.9478672986 + 0.0521327014, vec3(2.4)), c * 0.0773993808, vec3(lessThanEqual(c, vec3(0.04045))));
+  return c;
+}
 
 vec3 footage(int i, sampler2D tex) {
   vec3 d = vWorld - uScrO[i];
   vec2 uv = vec2(dot(d, uScrU[i]) / dot(uScrU[i], uScrU[i]), dot(d, uScrV[i]) / dot(uScrV[i], uScrV[i]));
   uv.y += uScrMix[i].w;
-  float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  if (uScrFixed[i] > 0.5) uv = vec2(vClip.x, -vClip.y) / vClip.z * 0.5 + 0.5;      // position in the picture, y down
+  // a placeholder still ends at its rectangle; own media is fitted to cover whatever part of the window the picture
+  // shows (core/slots.js), and past that its edge texels simply go on
+  float inside = max(step(0.5, uScrOwn[i]), step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0));
   uv = vec2(dot(uScrA[i].xy, uv), dot(uScrA[i].zw, uv)) + uScrT[i];
   vec2 tuv = vec2(uv.x, 1.0 - uv.y);
-  vec3 c = texture2D(tex, tuv).rgb;
+  vec3 c = texel(i, tex, tuv);
   // unsharp mask: the stills are upscaled video frames; this gives their edges back some bite (no effect once the
   // still is minified, the taps then land in the same mip texel)
   vec2 e = uTexel[i] * 1.5;
-  vec3 soft = (texture2D(tex, tuv + vec2(e.x, 0.0)).rgb + texture2D(tex, tuv - vec2(e.x, 0.0)).rgb
-             + texture2D(tex, tuv + vec2(0.0, e.y)).rgb + texture2D(tex, tuv - vec2(0.0, e.y)).rgb) * 0.25;
-  c = max(c + (c - soft) * uSharp, 0.0);
+  vec3 soft = (texel(i, tex, tuv + vec2(e.x, 0.0)) + texel(i, tex, tuv - vec2(e.x, 0.0))
+             + texel(i, tex, tuv + vec2(0.0, e.y)) + texel(i, tex, tuv - vec2(0.0, e.y))) * 0.25;
+  c = max(c + (c - soft) * uSharp[i], 0.0);
   float l = dot(c, vec3(0.3, 0.6, 0.1));
   vec3 duo = mix(vec3(0.07, 0.035, 0.008), uSepia, smoothstep(0.12, 0.95, sqrt(l)));
   c = mix(c, duo, uScrMix[i].y) * uScrMix[i].z;
@@ -374,7 +390,9 @@ export function makeShardMaterial() {
       uFogDensity: { value: 0 },
       uMirror: { value: 0 },
       uTexel: { value: [new THREE.Vector2(1 / 1024, 1 / 1024), new THREE.Vector2(1 / 1024, 1 / 1024)] },
-      uSharp: { value: 0.6 },
+      uSharp: { value: [0.6, 0.6] },
+      uScrOwn: { value: [0, 0] },
+      uScrFixed: { value: [0, 0] },
       uTexA: { value: dummyTex },
       uTexB: { value: dummyTex },
       uScrO: { value: [new THREE.Vector3(), new THREE.Vector3()] },

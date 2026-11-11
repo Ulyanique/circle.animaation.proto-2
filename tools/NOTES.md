@@ -23,6 +23,8 @@ Nothing in `tools/` is needed to run or build the site. `bash tools/setup.sh` re
     node dumpposes.mjs /tmp/work/poses_flown.json            # camera as flown — input of heropath.py
     node seq.mjs F0 F1 STEP OUTDIR [W H]                     # frames r_<frame·100>.jpg; ≈ 0.3 s/frame at 640×360
     node boot.mjs                                            # load time + console messages
+    node slotshot.mjs F1,F2,.. OUTDIR [W H]                  # single frames with window videos settled (see Window slots)
+    node boxcheck.mjs; node slotinfo.mjs; node vsync.mjs     # window boxes, numbers of the README table, video clock
     node heroprobe.mjs 0.4                                   # the light as drawn, sub-frame steps
     cd /tmp/work && /tmp/tools/venv/bin/python /home/user/work/bin/<tool>.py …   # system python has no numpy
 
@@ -124,6 +126,79 @@ yellow halo (helmet → band_fill from beyond the halo + desaturate).
 After a still changes, look at `s10.js`-style `gain` keys: they were tuned for the old, paler stills (helmet: 1.25 → 1.08).
 `public/footage/cabinetA.jpg`, `pylonsB.jpg` (pre-unify bake output, unused by the site) were deleted; bake.py makes them again.
 
+## Window slots (`src/media.js` → `src/core/slots.js`)
+
+Any photo or video in any window. User-facing description: README, «Свои фото и видео в окнах»; map of the windows:
+`docs/windows.jpg`.
+
+- **Settings.** Default export of `src/media.js`, keys `w01 … w11` (`SLOTS` maps them to the screen names of the shot
+  data: workers, closeup, plant, substation, lineman, helmet, field, pylons, cabinet, youngman, turbines).
+  `core/assets.js` then loads a photo (`loadPhoto`, scaled down by halves to 4096 px) or a video (`loadVideo`: muted
+  `VideoTexture`, mip-mapped, resolves once the frame at `start` is decoded, gives up after 12 s) instead of
+  `public/footage/<name>.jpg`. A file that fails → the still stays + a console warning. Own textures carry
+  `userData.media`.
+- **Box.** Media is fitted to the part of the window that the picture ever shows, not to the window's outline: the
+  camera flies so close that w02, w10, w11 are never seen whole (w11: only u 0.25…0.92 of its outline). `makeShot` gives
+  every screen to `registerSlot` with callbacks; after `linkShots` (the hand-over changes the flight) `finishSlots()`
+  asks each shot for its part (`seenPart`: 48×48 grid over the facets, every 2nd frame from 2 before the reveal to the
+  shot's last frame, widened by the dissolve frames at linked borders, 24 px margin), unions the parts over the shots
+  that share a window (w08, w09: s11b + s12, same screen uv in both), adds 2 % and points `uScrO/U/V` at the result.
+  About 55 ms at boot. `tools/boxcheck.mjs` checks the invariant (no window point in the picture lies outside its box).
+- **Frames.** A window's time on screen (`__slots[name].f0 … f1`: the `to` move and the video's timeline) starts when
+  its reveal reaches 0.02 and ends at the last frame at which a ray from a 16×12 grid of picture points still hits it
+  (`frames()` in `makeShot`): w08 is 533–598, although s12 lasts to 655 — it has left the frame by then.
+- **Fit.** `fitMatrix(W, H, aspect, { x, y, zoom, rotate })` → `uScrA` / `uScrT` every frame: cover fit that also holds
+  when rotated; x / y as CSS object-position; `to` = linear move over the window's frames; `'level'` = minus the tilt of
+  the window's x axis in the middle of its main shot. `tools/fittest.mjs` is its property test (200,000 random cases).
+- **`fixed`.** uv from the fragment's place in the picture (`vClip` varying, `uScrFixed`), box = the picture: the media
+  stands still on the screen and the window is a cut-out over it. Default for w04 (`FIXED` in `slots.js`): that window
+  fills the picture with the camera right over it — pinned to the window, a 16:9 photo would have to be 6700–7900 px
+  wide to be shown 1:1 at 1080p, and only a sliding piece of it would ever be seen.
+- **Shader** (`fx/shards.js`): `uScrOwn` 0 placeholder / 1 photo / 2 video; `uScrFixed`; `uSharp[2]` (0.6 for the
+  placeholders, the `sharpen` setting — default 0 — for own media). With own media `inside` is always 1: past the box
+  the clamped edge texels go on (never seen, by the invariant above).
+- **Video colour.** three.js uploads video frames as plain RGBA8 and decodes sRGB only in its own materials
+  (`DECODE_VIDEO_TEXTURE`); a ShaderMaterial has to do it itself (`texel()`), otherwise the video is washed out — the
+  same card as a photo and as a clip differed by 15 of 255 on average, 1 after the fix. A clip encoded from full-range
+  RGB without colour tags (ffmpeg default from a JPEG: `yuvj420p, bt470bg`) still comes out lighter — that is the file.
+- **Video clock.** `syncVideos(f, playing, speed)` once per rendered frame: target `start + (f − f0) / 24 · rate`
+  (looped); the video plays only while the film plays inside the window's frames (± 16 for the dissolve tails),
+  otherwise it is paused and seeked. While playing it is steered by `playbackRate` (± 40 %, on above 0.04 s off, off
+  below 0.01 s) and jumps only when more than 0.5 s off. `speed` = how fast the film runs against the wall clock
+  (`dt / raw` in the tick, 1 unless frames take over 100 ms) is fed forward — without it the video ran ahead and jumped
+  back about once a second under the software renderer. Hidden tab → videos paused. `tools/vsync.mjs` measures it.
+- **Tuning conveniences.** Dev server only: a paused film keeps `?f=N&paused` in the address (`rememberFrame` in
+  `main.js`), so the full reload after an edit of `media.js` returns to the same frame. `?card` puts a 16:9 test card
+  (`makeCard` in `assets.js`) into every window, placed by the window's own settings.
+- **Tools.** `slotshot.mjs F1,F2,.. OUTDIR [W H]` (frames with the videos settled; prints `window.__slots`; `QUERY=card`),
+  `slotinfo.mjs` (the numbers of the README table), `slotmap.py NOW_DIR CARD_DIR OUT.jpg` (the map):
+
+      node slotshot.mjs 172,215,285,362,415,508,528,552,610,710,870 /tmp/work/map_now            # empty media.js
+      QUERY=card node slotshot.mjs 172,215,285,362,415,508,528,552,610,710,870 /tmp/work/map_card
+      python tools/slotmap.py /tmp/work/map_now /tmp/work/map_card docs/windows.jpg
+
+  Test media: anything named `public/media/_*` is git-ignored. A numbered card: any image with a grid and corner
+  labels; a clip with something moving at a known speed:
+  `ffmpeg -loop 1 -i _card.jpg -f lavfi -i color=c=red:s=60x60:r=24 -filter_complex "[0:v]scale=1280:720:out_range=tv:out_color_matrix=bt709,format=yuv420p[bg];[bg][1:v]overlay=x='100+t*150':y=40,format=yuv420p" -t 6 -r 24 -c:v libx264 -color_range tv -colorspace bt709 -movflags +faststart _clip.mp4`.
+- **Numbers** (`slotinfo.mjs`; aspect of the seen box, share of the picture covered, width of a 16:9 photo shown 1:1
+  on a 1920 px picture — median / closest): w01 0.86, 35 %, 1980 / 2140; w02 1.74, 95 %, 2310 / 2390; w03 0.78, 33 %,
+  2090 / 2770; w04 1.01, 100 %, 6670 / 7920 (hence fixed); w05 1.02, 44 %, 2380 / 6480; w06 0.90, 31 %, 2400 / 4320;
+  w07 1.87, 73 %, 2370 / 2420; w08 1.23, 58 % in s11b, 2310 / 2420; w09 1.47, 17 % in s11b and 51 % in s12,
+  2100 / 2130; w10 0.74, 41 %, 2970 / 3820; w11 0.75, 60 %, 4160 / 4450.
+  Tilt of the window's x axis on the screen, start → middle → end of the shot, degrees clockwise: w04 −19 → −1 → 2;
+  w05 −17 → 0 → 4; w06 11 → 8 → 15; w07 9 → 4 → 0; w08 7 → 3 → 0, then to −52 while it leaves in s12; w09 10 → 7 in
+  s11b, 7 → −1 → −44 in s12; w10 −2 → −1 → −19 (its verticals stay within ± 3); w01–w03, w11 within ± 1.
+- **Checked** (headless, test card + test clips + one architecture photo): media covers every window with no gap at
+  any setting; x: 0 / 1 show the card's edges at the edge of what is seen; numeric rotate, `'level'`, `to` pan and zoom;
+  6400×3600 photo → 4096×2304 on the GPU; mp4 (H.264) and webm (VP9) play, colours equal to the photo's; missing photo,
+  missing video, unknown key → warning + placeholder; no jump through the dissolve at f577 with media in w08 + w09;
+  a video stays within ± 0.06 s of the film's clock at the display rate and is exact after a pause; empty settings →
+  the full render is bit-identical to the one before slots (`new12` = `new11`, all 1213 frames at 640×360).
+- **Still tied to the placeholders:** `FACES` in `facecheck.py` (the light's route avoids the faces of the stills, not
+  whatever a custom picture shows); s13's camera (tracked on the picture); the uv glide of a still inside its facet
+  (skipped for own media); the per-screen `reveal` / `sepia` / `gain` keys of the shot definitions — these stay on
+  for own media on purpose (the gold-to-colour reveal is part of the look). At most two screens per shot.
+
 ## Dead ends (do not retry)
 
 - Hero planner: bounded least squares → wiggly path. Tail fixed in the shot's world → hairpins at cuts, collapse at
@@ -139,6 +214,14 @@ After a still changes, look at `s10.js`-style `gain` keys: they were tuned for t
   compute only); `imgflow.py` wants `render:DIR`; `seq.mjs` can crash transiently → always count the frames; a contact
   sheet drawn on one canvas lets polygons spill into neighbouring tiles.
 
+- Slots: fitting media to the window's outline (bounding box of its facets) — in w11 a third of a 16:9 frame went to
+  parts of the window that never enter the picture, and `x: 0` showed nothing of the left edge; fit to the seen part.
+  Video sync by a hard jump at 0.25 s drift → visible jumps back whenever frames are slow; proportional steering alone
+  → a standing lead (0.26 s at 0.7× film speed); it needs the film's speed fed forward. `rig.project(f, w, out)` takes
+  an array `[x, y, z]`, not a `Vector3` (→ NaN), and fills only `out.x`, `out.y`. A paused video seeks asynchronously:
+  capture tools must render, wait, render again (`slotshot.mjs`). A GLSL comment with a back-tick inside the shader's
+  template string ends the string («Unexpected identifier»).
+
 ## Accepted differences
 
 s03 middle slower than the original; s14a a single turning plate instead of the spinning prism; stills (not live
@@ -150,4 +233,5 @@ that returns is at envelope ≤ 0.05 once the centre line is further out than th
 
 `new4` 0 / 1 (tracked trails, smoothed) · `new5` 0 / 7 (first hero light; lamp flicker) · `new6` 0 / 0 (lamp fix) ·
 `new7` 0 / 0 (s13 re-routed round the face) · `new8` 0 / 0 (s05, s09, s10 re-routed round faces) · `new9` 0 / 0 (shade
-pass) · `new10` 0 / 0 (four stills rebuilt) · `new11` (s10–s11b re-routed for the whole helmet face): see the report. Build 1,123.86 kB (gzip 359.09), boot 3–4 s without console messages.
+pass) · `new10` 0 / 0 (four stills rebuilt) · `new11` 0 / 0 (s10–s11b re-routed for the whole helmet face) · `new12` 0 / 0 (window slots, empty `media.js`:
+bit-identical to `new11`). Build 1,133 kB (gzip 363), boot 4–5 s on the dev server without console messages.
