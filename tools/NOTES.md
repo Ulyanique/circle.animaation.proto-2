@@ -173,6 +173,26 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   new numbers into the live records (`r.place = { base, end }`, `setFixed`); anything else — another file, a video's
   timing — calls `location.reload()`. `?card` puts a 16:9 test card (`makeCard` in `assets.js`) into every window,
   placed by the window's own settings.
+- **Photos** (`loadPhoto` / `develop` in `assets.js`) go to the GPU through a 2D canvas, not straight from the
+  `<img>`: three.js sets `UNPACK_COLORSPACE_CONVERSION_WEBGL` to NONE, so an image with an embedded profile was
+  uploaded as raw numbers — an Adobe RGB test chart came out duller by 6 of 255 on average, up to 61
+  (`phototest.mjs`). A canvas converts to sRGB and applies the EXIF orientation in every browser; untagged upright
+  photos come out pixel-identical to the direct upload. Cap 4096 px, in steps of at most ×0.5 and at most 16 MP
+  (phone canvas limit); `alpha: false`, so see-through PNGs sit on black. Each canvas is emptied right after
+  `initTexture` (one alive at a time, not eleven); the `<img>` is kept, and `restorePhotos()` re-develops the photos
+  after a lost WebGL context (`webglcontextrestored`, registered after three.js's own listener).
+  `tools/phototest.py` makes the test photos (it writes its own minimal Adobe RGB ICC profile),
+  `tools/phototest.mjs` compares the frames: tagged vs converted beforehand 0 / 0; EXIF-turned vs upright 0.04 mean;
+  context lost and restored → the same screen.
+- **A paused film is not redrawn.** The loop in `main.js` draws when the film plays, when the frame changed or when
+  something called `touch()` (`util.js`: page size, bars, `setFixed`, hot update of `media.js`, the placement tool's
+  `refresh()`, a restored context, a tab coming back) — three frames, plus one 300 ms later for anything that arrives
+  late; `syncVideos()` returns true while a video's window is near the screen, and that keeps it drawing. Before,
+  every display frame was drawn while paused — and pictures are placed with the film paused. In the headless tools
+  it also mattered: the single-process software renderer queued those frames, and leaving the page (a reload) took
+  20–30 s instead of 0.1 s. `player.renders` counts drawn frames; `placertest.mjs` checks both directions (at rest
+  nothing is drawn; a moved picture is drawn and shows on the screen). Anything new that changes the picture
+  without changing the frame must call `touch()`.
 - **Placement tool** (`src/dev/`, key E or `?edit`; dev server only — `main.js` imports it under
   `import.meta.env.DEV`, the server side is a vite plugin with `apply: 'serve'`):
   - `placer.js` — the panel. Picking: `slots[name].users[i].ask.uv(f, x, y)` (ray through a picture point → the
@@ -193,10 +213,14 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   - A new file means a reload (pictures are loaded at boot): the page keeps its frame (`player.keepFrame()`), the
     panel its state and a note (sessionStorage). Photos over 4096 px are scaled down in the page before the upload
     (canvas → JPEG 0.9; orientation applied, colours converted to sRGB, camera data dropped).
+  - Unsaved moves are never undone by news from the file: a hot update re-places only the windows whose line changed
+    (`applySettings` compares the normalized placement), and after a save the tool tells `slots.js` what the file
+    now says (`adoptSettings`), so the watcher's echo of that save changes nothing.
   - Tests: `node tools/linetest.mjs` (plain node; the line and the file's text) and `placertest.mjs` (headless, about
-    8 min under the software renderer: the server's refusals, a real mouse on the page, pixel comparison of a drag,
-    saving without reload, files from the list / the button / dropped / shrunk, the read-only page). `placertest`
-    makes its own `_test_*` pictures and puts `src/media.js` back as it found it.
+    4 min: the server's refusals, a real mouse on the page, pixel comparison of a drag, the idle loop, saving without
+    reload, files from the list / the button / dropped / shrunk and turned upright, the read-only page). `placertest`
+    makes its own `_test_*` pictures and puts `src/media.js` back as it found it; with the dev server in
+    `MEDIA_TOOL=remote` mode it skips the read-only checks. `placershot.mjs PHOTO OUT.png` makes `docs/placer.jpg`.
 - **Tools.** `slotshot.mjs F1,F2,.. OUTDIR [W H]` (frames with the videos settled; prints `window.__slots`; `QUERY=card`),
   `slotinfo.mjs` (the numbers of the README table), `slotmap.py NOW_DIR CARD_DIR OUT.jpg` (the map):
 

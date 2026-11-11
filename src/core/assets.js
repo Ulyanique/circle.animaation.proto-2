@@ -9,6 +9,43 @@ const MAX_SIDE = 4096;      // longer side of a photo on the GPU (every WebGL 2 
 /** `src` of media.js -> address: a file under public/, or a full address (its server must allow cross-origin use). */
 const urlOf = (src) => (/^([a-z][a-z0-9+.-]*:)?\/\//i.test(src) ? src : base + src.replace(/^\.?\//, ''));
 
+// Own photos reach the GPU through a 2D canvas, which makes every browser show the same picture:
+//   · in sRGB — three.js asks WebGL to take pixel values as they are, so a photo tagged Display P3 (phones) or
+//     Adobe RGB (cameras) would come out duller than it is; drawn on a canvas, it is converted as on any web page;
+//   · upright — a phone or camera stores "turn me a quarter" in EXIF, and not every browser's WebGL looks at it;
+//   · no bigger than the film can use.
+// The canvas is emptied as soon as its picture is on the GPU, one photo at a time: a dozen 10-megapixel canvases at
+// once are more than a phone will give. After a lost WebGL context the photos are developed again (restorePhotos).
+const photos = [];      // { texture, img } of the photos in the windows
+let upload = null;      // puts a texture on the GPU at once (given to loadAssets)
+
+/** <img> -> texture.image; returns the size the picture has there. */
+function develop(texture, img) {
+  let im = img, w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  do {
+    // a 24-megapixel original would cost 100+ MB of video memory and upload time for nothing: scale it down
+    // (by halves, then the rest — one big step would alias in browsers that only filter bilinearly; and no step
+    // bigger than 16 megapixels: phones give a canvas no more)
+    const k = Math.min(1, Math.max(0.5, MAX_SIDE / Math.max(w, h)), Math.sqrt(16e6 / (w * h)));
+    const c = document.createElement('canvas');
+    c.width = w = Math.max(1, Math.round(w * k)); c.height = h = Math.max(1, Math.round(h * k));
+    const g = c.getContext('2d', { alpha: false });      // a see-through PNG shows over black, the same everywhere
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(im, 0, 0, w, h);
+    if (im !== img) im.width = im.height = 0;
+    im = c;
+  } while (Math.max(w, h) > MAX_SIDE);
+  texture.image = im;
+  texture.needsUpdate = true;
+  if (upload) { upload(texture); im.width = im.height = 0; }
+  return [w, h];
+}
+
+/** The WebGL context was lost and is back: the photos' canvases are long empty, so make them again. */
+export function restorePhotos() {
+  for (const p of photos) { try { develop(p.texture, p.img); } catch (e) { console.warn('photo not restored', e); } }
+}
+
 /** A photo from public/ (src/media.js). Resolves to null if it cannot be loaded — the placeholder then stays. */
 function loadPhoto(loader, cfg) {
   return new Promise((resolve) => {
@@ -16,20 +53,9 @@ function loadPhoto(loader, cfg) {
       t.colorSpace = THREE.SRGBColorSpace;
       t.anisotropy = 16;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      // a 24-megapixel original would cost 100+ MB of video memory and upload time for nothing: scale it down first
-      // (by halves, then the rest — one big step would alias in browsers that only filter bilinearly)
-      let im = t.image, w = im.width, h = im.height;
-      while (Math.max(w, h) > MAX_SIDE) {
-        const k = Math.max(0.5, MAX_SIDE / Math.max(w, h));
-        const c = document.createElement('canvas');
-        c.width = w = Math.max(1, Math.round(w * k)); c.height = h = Math.max(1, Math.round(h * k));
-        const g = c.getContext('2d');
-        g.imageSmoothingQuality = 'high';
-        g.drawImage(im, 0, 0, w, h);
-        im = c;
-      }
-      t.image = im;
-      t.userData.media = { kind: 'photo', cfg, width: t.image.width, height: t.image.height };
+      const img = t.image, [width, height] = develop(t, img);
+      photos.push({ texture: t, img });
+      t.userData.media = { kind: 'photo', cfg, width, height };
       resolve(t);
     }, undefined, () => { console.warn(`media.js: cannot load ${cfg.src} — the placeholder is shown instead`); resolve(null); });
   });
@@ -114,7 +140,9 @@ function loadTexture(loader, url) {
   });
 }
 
-export async function loadAssets(names) {
+/** `toGpu(texture)`: puts a texture on the GPU at once — with it a photo's canvas is given back as soon as it is there. */
+export async function loadAssets(names, toGpu = null) {
+  upload = toGpu;
   const loader = new THREE.TextureLoader();
   const footage = {};
   await Promise.all(names.map(async (n) => {

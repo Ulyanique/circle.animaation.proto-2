@@ -1,8 +1,8 @@
 // «Янтарный циркуль» — real-time three.js recreation of the reference video (video.mp4).
 
 import { Stage } from './core/stage.js';
-import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame } from './core/util.js';
-import { loadAssets } from './core/assets.js';
+import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame, touch, touched } from './core/util.js';
+import { loadAssets, restorePhotos } from './core/assets.js';
 import { syncVideos, finishSlots } from './core/slots.js';
 import { buildShots, linkShots, FOOTAGE } from './shots/index.js';
 import { makeHero } from './fx/hero.js';
@@ -45,6 +45,8 @@ const player = {
   links: [],
   current: null,
   audio: null,
+  renders: 0,     // frames drawn so far (the checking tools read it)
+  live: false,    // a video is showing in a window: the picture changes on its own
 
   shotAt(f) {
     const s = this.shots;
@@ -55,7 +57,8 @@ const player = {
   /** Render the frame for a given (fractional, 1-based) video frame number. */
   renderAt(f) {
     f = clamp(f, 1, LAST_FRAME);
-    syncVideos(f, this.playing, this.speed);      // videos in the windows run on the film's clock
+    this.renders++;
+    this.live = syncVideos(f, this.playing, this.speed);      // videos in the windows run on the film's clock
     const shot = this.shotAt(f);
     if (shot !== this.current) {
       if (this.current) this.current.group.visible = false;
@@ -177,8 +180,10 @@ function layout() {
   let ratio = params.has('dpr') ? Number(params.get('dpr')) : Math.min(window.devicePixelRatio || 1, 3);
   if (!params.has('dpr')) ratio = Math.min(ratio, Math.sqrt(MAX_PIXELS / Math.max(1, w * h))) * quality;
   stage.resize(window.innerWidth, window.innerHeight, ratio);
+  touch();
 }
 window.addEventListener('resize', layout);
+document.addEventListener('visibilitychange', touch);      // a tab that comes back may have lost its picture
 layout();
 
 // ---- HUD ------------------------------------------------------------------------------------
@@ -213,11 +218,12 @@ window.addEventListener('keydown', (e) => {
 
 // ---- cinema bars (2.39:1), off by default: `?scope` in the address or the B key ---------------------
 let scope = params.has('scope');
-function setScope(on) { scope = on; stage.final.uniforms.uBars.value = on ? (1 - (16 / 9) / 2.39) / 2 : 0; }
+function setScope(on) { scope = on; stage.final.uniforms.uBars.value = on ? (1 - (16 / 9) / 2.39) / 2 : 0; touch(); }
 setScope(scope);
 
 // ---- boot -----------------------------------------------------------------------------------
-loadAssets(FOOTAGE).then((assets) => {
+stage.renderer.domElement.addEventListener('webglcontextrestored', () => { restorePhotos(); touch(); });      // after three.js's own listener
+loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t)).then((assets) => {
   player.shots = buildShots(assets, stage);
   player.links = linkShots(player.shots);
   finishSlots(player.links);      // what each window shows of itself is known only now, with the flights linked
@@ -254,9 +260,16 @@ loadAssets(FOOTAGE).then((assets) => {
   // even. The soundtrack follows the picture: HTMLMediaElement.currentTime only updates in coarse, uneven
   // steps, so driving the camera from it makes the motion judder. Small drift is trimmed with an inaudible
   // playback-rate change; a big one (tab was in the background, audio stalled) is fixed with one jump.
+  //
+  // A paused film is a still picture, and pictures are placed in their windows with the film paused, for minutes on
+  // end: drawing it at the display's rate all that time would keep the GPU — and a laptop's fan — busy for nothing.
+  // So a paused film is drawn when something has changed (the frame, or anything that calls touch()): three frames,
+  // and one more a moment later for whatever arrives late. A video showing in a window keeps it drawing.
   let last = performance.now();
   let drift = 0;                 // smoothed (audio - picture), s
   let slow = 0, fastFrames = 0;  // frame-time governor state
+  let shown = -1, seen = -1;     // the frame and the touch() count that were drawn last
+  let left = 0, lateAt = 0;      // frames still to draw; when to draw the late one (0 = it is drawn)
   function tick(now) {
     const raw = Math.max(0, (now - last) / 1000);
     const dt = Math.min(0.1, raw);
@@ -287,7 +300,14 @@ loadAssets(FOOTAGE).then((assets) => {
         }
       }
     }
-    player.renderAt(timeToFrame(player.time));
+    const f = timeToFrame(player.time), stamp = touched();
+    if (player.playing || f !== shown || stamp !== seen) { left = 3; lateAt = now + 300; }
+    const late = lateAt > 0 && now >= lateAt;
+    if (left > 0 || late || player.live) {
+      player.renderAt(f);
+      shown = f; seen = stamp; left--;
+      if (late) lateAt = 0;
+    }
     syncHud();
     if (!window.__manual) requestAnimationFrame(tick);
   }

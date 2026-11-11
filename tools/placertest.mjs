@@ -94,13 +94,19 @@ const entries = (list, headers = {}, host = HOST) => post('/__media', JSON.strin
 try {
   await page.goto(`${HOST}/?f=430&paused&edit&dpr=1&nowarm`, { waitUntil: 'load', timeout: 120000 });
   await ready();
-  const card = await makeCard(1920, 1080, 20), big = await makeCard(6400, 3600, 80);
+  const card = await makeCard(1920, 1080, 20);
+  // as a camera held upright writes it: 6400×3600 on its side, EXIF orientation 6 ("turn a quarter clockwise to show")
+  const exif = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), Buffer.from([0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0])]);
+  const plainBig = await makeCard(6400, 3600, 80);
+  const big = Buffer.concat([plainBig.subarray(0, 2), Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 255]), exif, plainBig.subarray(2)]);
   fs.writeFileSync(`${tmp}/_test_pick.jpg`, card);
 
   // ---- the server side: what may be written, and by whom ------------------------------------------
   console.log('— server');
   let r = await post('/__media/file?name=_test_card.jpg', card);
-  check('a picture is taken into public/media/', r.ok && r.name === '_test_card.jpg' && fs.statSync(`${MEDIA}/_test_card.jpg`).size === card.length, JSON.stringify(r));
+  check('a picture is taken into public/media/', r.ok && r.name === '_test_card.jpg' && r.replaced === false && fs.statSync(`${MEDIA}/_test_card.jpg`).size === card.length, JSON.stringify(r));
+  r = await post('/__media/file?name=_test_card.jpg', card);
+  check('the same name again replaces the file, and says so', r.ok && r.replaced === true, JSON.stringify(r));
   r = await post(`/__media/file?name=${encodeURIComponent('../../_test_climb.jpg')}`, card);
   check('a name with folders lands in public/media/ all the same', r.ok && r.name === '_test_climb.jpg' && fs.existsSync(`${MEDIA}/_test_climb.jpg`) && !fs.existsSync(`${REPO}/_test_climb.jpg`), JSON.stringify(r));
   for (const name of ['evil.js', 'notes.txt', '.htaccess', 'a.jpg.php', '']) {
@@ -119,14 +125,30 @@ try {
   check('a page of another site may not write (Origin)', r.status === 403, JSON.stringify(r));
   r = await entries([{ id: 'w05', settings: { src: 'media/_test_card.jpg' } }], { 'Sec-Fetch-Site': 'cross-site' });
   check('a page of another site may not write (Sec-Fetch-Site)', r.status === 403, JSON.stringify(r));
-  r = await entries([{ id: 'w05', settings: { src: 'media/_test_card.jpg' } }], { 'X-Forwarded-For': '203.0.113.7' });
-  check('through a proxy the tool is read-only', r.status === 403 && r.error === 'read-only', JSON.stringify(r));
-  const ip = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)?.address;
-  if (ip) {
-    r = await entries([{ id: 'w05', settings: { src: 'media/_test_card.jpg' } }], {}, `http://${ip}:5173`);
-    const info = await fetch(`http://${ip}:5173/__media`).then((x) => x.json());
-    check('from another address the tool is read-only', r.status === 403 && r.error === 'read-only' && info.write === false, `${ip}: ${JSON.stringify(r)}`);
-  } else console.log('     (no second network address: the read-only check from another address is skipped)');
+  // a dev server started with MEDIA_TOOL=remote lets other machines write: the read-only checks do not apply to it
+  const remote = (await fetch(`${HOST}/__media`, { headers: { 'X-Forwarded-For': '203.0.113.7' } }).then((x) => x.json())).write === true;
+  const ip = remote ? null : Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)?.address;
+  if (remote) console.log('     (the dev server runs with MEDIA_TOOL=remote: the read-only checks are skipped)');
+  else {
+    r = await entries([{ id: 'w05', settings: { src: 'media/_test_card.jpg' } }], { 'X-Forwarded-For': '203.0.113.7' });
+    check('through a proxy the tool is read-only', r.status === 403 && r.error === 'read-only', JSON.stringify(r));
+    // another site's name made to point at this machine: to the browser its page is "the same origin"
+    r = await new Promise((done) => {
+      const q = http.request(`${HOST}/__media`, { method: 'POST', headers: { Host: 'evil.example:5173', Origin: 'http://evil.example:5173', 'Sec-Fetch-Site': 'same-origin', 'Content-Type': 'application/json' } }, (res) => {
+        let body = '';
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => done({ status: res.statusCode, body }));
+      });
+      q.on('error', (e) => done({ status: 0, body: e.message }));
+      q.end(JSON.stringify({ entries: [{ id: 'w05', settings: { src: 'media/_test_card.jpg' } }] }));
+    });
+    check('under a host name that is not localhost the tool is read-only', r.status === 403 && /read-only/.test(r.body), JSON.stringify(r));
+    if (ip) {
+      r = await entries([{ id: 'w05', settings: { src: 'media/_test_card.jpg' } }], {}, `http://${ip}:5173`);
+      const info = await fetch(`http://${ip}:5173/__media`).then((x) => x.json());
+      check('from another address the tool is read-only', r.status === 403 && r.error === 'read-only' && info.write === false, `${ip}: ${JSON.stringify(r)}`);
+    } else console.log('     (no second network address: the read-only check from another address is skipped)');
+  }
   for (const [what, list] of [['a window that does not exist', [{ id: 'w12', settings: { src: 'media/_test_card.jpg' } }]], ['a file that is not in public/media/', [{ id: 'w05', settings: { src: 'media/_test_nothing.jpg' } }]],
     ['a file outside public/media/', [{ id: 'w05', settings: { src: '../src/main.js' } }]], ['an address', [{ id: 'w05', settings: { src: 'https://example.com/a.jpg' } }]],
     ['a number that is text', [{ id: 'w05', settings: { src: 'media/_test_card.jpg', x: '0.5; alert(1)' } }]], ['no entries', []]]) {
@@ -152,8 +174,24 @@ try {
   await page.mouse.move(...A);
   const p0 = await probe(...A);
   check('w05 is under the cursor', p0 && p0.id === 'w05', JSON.stringify(p0));
+  // the page's own loop: a paused film is drawn only when something has changed
+  const renders = () => page.evaluate(() => window.__player.renders);
+  const onScreen = () => page.screenshot({ clip: { x: 560, y: 300, width: 200, height: 200 }, encoding: 'base64', captureBeyondViewport: false });
+  await wait(2500);
+  const n0 = await renders();
+  await wait(1500);
+  const n1 = await renders();
+  check('a paused film at rest is not drawn again', n1 === n0, `${n0} -> ${n1} frames drawn in 1.5 s`);
+  const seen0 = await onScreen();
+  await wait(1200);
+  const n2 = await renders();
   await page.mouse.wheel({ deltaY: -400 });
-  await wait(100);
+  await wait(1500);
+  const n3 = await renders(), seen1 = await onScreen();
+  await wait(1200);
+  const n4 = await renders();
+  check('… and is drawn again when a picture is moved', n3 > n2 && n3 - n2 <= 8, `${n3 - n2} frames drawn after the wheel`);
+  check('… which shows on the screen', seen0 !== seen1 && n4 === n3, `the screen ${seen0 === seen1 ? 'did not change' : 'changed'}; taking its picture drew ${n4 - n3} frames`);
   const p1 = await probe(...A);
   check('the wheel zooms in', p1.place.zoom > 1.5 && p1.place.zoom < 1.7, `zoom ${p0.place.zoom} -> ${p1.place.zoom}`);
   check('… about the cursor', near(p0.media, p1.media, 0.002), `${fmt(p0.media)} -> ${fmt(p1.media)}`);
@@ -227,6 +265,25 @@ try {
   await wait(100);
   await click('#placer [data-a=save]');
   check('a comment after the line survives a save', await until(() => /  w05: \{ src: 'media\/_test_card\.jpg', [^}]*zoom: 1\.[3-9]\d* \},   \/\/ by hand\n/.test(fileNow())), fileNow().split('\n').find((l) => l.includes('w05')));
+
+  // what is not saved yet survives news from the file: the echo of a save, and a line of another window edited by hand
+  await page.mouse.move(...A);
+  await page.mouse.wheel({ deltaY: -100 });
+  await wait(100);
+  await click('#placer [data-a=save]');
+  await until(async () => (await state()).unsaved.length === 0);
+  await page.mouse.wheel({ deltaY: -100 });      // moved on straight after the save
+  await wait(100);
+  const kept = (await state()).line;
+  await wait(1500);
+  st = await state();
+  check('a move made right after a save is not undone by the save coming back', st.line === kept && st.unsaved.join() === 'w05', `${kept}  ->  ${st.line}`);
+  fs.writeFileSync(SETTINGS, fileNow().replace("  w04: { src: 'media/_test_card.jpg' },\n", "  w04: { src: 'media/_test_card.jpg', x: 0.3 },\n"));
+  check('another window edited by hand is taken over', await until(() => page.evaluate(() => window.__slots.substation.place.base.x === 0.3)));
+  st = await state();
+  check('… and the unsaved move stays, and stays unsaved', st.line === kept && st.unsaved.join() === 'w05' && (await marked()), `${st.line}  unsaved: ${st.unsaved}`);
+  await click('#placer [data-a=undo]');
+  await wait(100);
 
   // ---- a `to` move ------------------------------------------------------------------------------
   console.log('— move, fixed');
@@ -316,7 +373,7 @@ try {
   st = await state();
   check('«Загрузить…»: the file is in public/media/ and in the window', fs.existsSync(`${MEDIA}/_test_pick.jpg`) && st.line === "w01: { src: 'media/_test_pick.jpg' }," && st.files.includes('_test_pick.jpg') && (await frameNow()) === 165, JSON.stringify(st));
 
-  // dropped on a window: w02 at f215; a photo bigger than the film can use is scaled down on the way
+  // dropped on a window: w02 at f215; a photo bigger than the film can use is scaled down on the way, upright
   await seek(215);
   const drop = (bytes, name, type, x, y) => page.evaluate(async (b64, name, type, x, y) => {
     const dt = new DataTransfer();
@@ -345,12 +402,13 @@ try {
   const stored = `${MEDIA}/_test_big photo _1.jpg`;
   const size = fs.existsSync(stored) ? await page.evaluate(async (url) => { const im = new Image(); im.src = url; await im.decode(); return [im.naturalWidth, im.naturalHeight]; }, `${HOST}/media/${encodeURIComponent('_test_big photo _1.jpg')}`) : null;
   check('a dropped file opens the tool and lands in the window under the cursor', hot === 'w02' && st.open && st.sel === 'closeup' && st.line === "w02: { src: 'media/_test_big photo _1.jpg' },", `${hot} ${JSON.stringify(st)}`);
-  check('a 6400×3600 photo is stored as 4096×2304', !!size && size[0] === 4096 && size[1] === 2304, `${size}`);
-  check('… and the note says so', /уменьшен: 6400×3600 → 4096×2304/.test(st.note), st.note);
+  check('a 24-megapixel photo taken upright is stored upright, 2304×4096', !!size && size[0] === 2304 && size[1] === 4096, `${size}`);
+  check('… and the note says so', /уменьшен: 3600×6400 → 2304×4096/.test(st.note), st.note);
   check('… and it shows in the window', (await probe(...spot))?.media?.length === 2, JSON.stringify(await probe(...spot)));
 
   // ---- read-only page ---------------------------------------------------------------------------
   if (ip) {
+    await page.goto('about:blank');
     await page.goto(`http://${ip}:5173/?f=430&paused&edit&dpr=1&nowarm`, { waitUntil: 'load', timeout: 120000 });
     await ready();
     await page.mouse.move(...A);
@@ -359,6 +417,8 @@ try {
     st = await state();
     const off = await page.evaluate(() => ['[data-a=save]', '[data-a=pick]', 'select'].map((q) => document.querySelector(`#placer ${q}`).disabled));
     check('opened from another address: pictures move, the line shows, nothing can be written', !st.write && st.unsaved.join() === 'w05' && /zoom: 1\.\d+/.test(st.line) && off.every(Boolean) && /Запись выключена/.test(st.note), `${JSON.stringify(off)} ${st.line} ${st.note}`);
+    // the page itself was drawn by the paused film's own loop (nobody asked it to render): the window is not black
+    await page.screenshot({ path: '/tmp/work/placer_readonly.png', captureBeyondViewport: false });
   }
   await page.keyboard.press('KeyE');
   await wait(100);

@@ -9,7 +9,7 @@
 // is paused, and seek with it.
 
 import settings from '../media.js';
-import { FPS, VIDEO_W, VIDEO_H, clamp, lerp } from './util.js';
+import { FPS, VIDEO_W, VIDEO_H, clamp, lerp, touch } from './util.js';
 
 /** Slot ids in the order the windows appear -> name of the screen in the shot data (and of the placeholder still). */
 export const SLOTS = {
@@ -93,6 +93,7 @@ export function placeAt(r, f) {
 export function setFixed(r, on) {
   r.fixed = !!on;
   for (const u of r.users) if (u.own) u.ask.fixed(r.fixed);
+  touch();
 }
 
 /**
@@ -163,10 +164,12 @@ const TAIL = 16;      // frames a shot may still be on screen past its own range
  * the wall clock — 1, unless frames take over 100 ms (the film then slows down rather than skip, and so do the videos).
  */
 export function syncVideos(f, playing, speed = 1) {
+  let live = false;      // a video is in a window on screen: its frames arrive on their own time, so keep drawing
   for (const r of Object.values(registry)) {
     const el = r.video;
     if (!el) continue;
     if (f < r.f0 - TAIL || f > r.f1 + TAIL) { if (!el.paused) el.pause(); continue; }      // its window is far away
+    live = true;
     const rate = r.cfg.rate ?? 1, dur = el.duration, start = r.cfg.start ?? 0;
     let t = start + (Math.max(0, f - r.f0) / FPS) * rate;
     const loop = r.cfg.loop !== false && Number.isFinite(dur) && dur > 0.2;
@@ -190,6 +193,14 @@ export function syncVideos(f, playing, speed = 1) {
       if (Math.abs(off) > 0.02 && !el.seeking) el.currentTime = t;
     }
   }
+  return live;
+}
+
+/** The placement tool has saved this window's line: the file now says `cfg`. */
+export function adoptSettings(name, cfg) {
+  if (!chosen[name]) return;
+  chosen[name] = cfg;
+  if (registry[name]) registry[name].cfg = cfg;
 }
 
 // Dev server: an edit of media.js that only moves pictures (x, y, zoom, rotate, to, fixed) shows at once, under the
@@ -197,22 +208,31 @@ export function syncVideos(f, playing, speed = 1) {
 if (import.meta.hot) {
   const PLACING = ['x', 'y', 'zoom', 'rotate', 'to', 'fixed'];
   const rest = (cfg) => JSON.stringify(Object.keys(cfg).filter((k) => !PLACING.includes(k)).sort().map((k) => [k, cfg[k]]));
+  const placing = (cfg) => JSON.stringify([placeOf(cfg), cfg.fixed ?? null]);
+  /** Takes the new settings over; returns the windows whose picture it moved, or null: the page has to load again. */
   const applySettings = (next) => {
-    const want = choose(next, false);
+    const want = choose(next, false), moved = [];
     for (const name of new Set([...Object.keys(chosen), ...Object.keys(want)])) {
-      if (!chosen[name] || !want[name] || rest(chosen[name]) !== rest(want[name])) return false;
+      if (!chosen[name] || !want[name] || rest(chosen[name]) !== rest(want[name])) return null;
     }
     for (const [name, cfg] of Object.entries(want)) {
+      const was = chosen[name], r = registry[name];
       chosen[name] = cfg;
-      const r = registry[name];
       if (!r || !r.place) continue;      // its file did not load: the placeholder is on
-      r.cfg = cfg; r.place = placeOf(cfg);
+      r.cfg = cfg;
+      // a window whose line says the same as before keeps what is on the screen: it may have been moved in the
+      // placement tool since, and not saved yet
+      if (placing(was) === placing(cfg)) continue;
+      r.place = placeOf(cfg);
       setFixed(r, cfg.fixed ?? FIXED[r.id] ?? false);
+      moved.push(name);
     }
-    return true;
+    touch();
+    return moved;
   };
   import.meta.hot.accept('../media.js', (mod) => {
-    if (mod && applySettings(mod.default)) window.dispatchEvent(new Event('media-settings'));
+    const moved = mod ? applySettings(mod.default) : null;
+    if (moved) window.dispatchEvent(new CustomEvent('media-settings', { detail: moved }));
     else location.reload();
   });
 }

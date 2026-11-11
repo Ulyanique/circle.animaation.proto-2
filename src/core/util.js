@@ -14,6 +14,12 @@ export const smoother = (t) => { t = clamp(t); return t * t * t * (t * (6 * t - 
 export const frameToTime = (f) => (f - 1) / FPS;
 export const timeToFrame = (t) => t * FPS + 1;
 
+// "The picture has to be drawn again": raised by whatever changes it besides the film's own clock — the size of the
+// page, the bars, where a picture sits in its window. A paused film is drawn only then (the loop in main.js).
+let stamp = 0;
+export const touch = () => { stamp++; };
+export const touched = () => stamp;
+
 /** Deterministic PRNG (mulberry32). */
 export function rng(seed) {
   let a = seed >>> 0;

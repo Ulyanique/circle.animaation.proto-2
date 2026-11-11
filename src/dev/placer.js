@@ -6,8 +6,8 @@
 // What is on the screen is what gets saved: the live values are kept at the precision of the saved line.
 // The dev server's side is mediaServer.js. Loaded by main.js in dev mode only — not part of the build.
 
-import { slots, placeAt, setFixed, fitParts, fixedByDefault, mediaFor, CARD } from '../core/slots.js';
-import { VIDEO_W, VIDEO_H, FPS, LAST_FRAME, clamp, lerp, timeToFrame } from '../core/util.js';
+import { slots, placeAt, setFixed, fitParts, fixedByDefault, mediaFor, adoptSettings, CARD } from '../core/slots.js';
+import { VIDEO_W, VIDEO_H, FPS, LAST_FRAME, clamp, lerp, timeToFrame, touch } from '../core/util.js';
 import { MAX_UPLOAD, mediaLine, safeName } from './mediaLine.js';
 
 const MAX_SIDE = 4096;      // longer side a photo keeps: the film puts no more than that on the GPU (core/assets.js)
@@ -86,36 +86,43 @@ const HTML = `
 <pre></pre>
 <div class="acts main"><button data-a="save">Сохранить в media.js</button><button data-a="copy">Скопировать строку</button><button data-a="undo" title="Как в файле">Вернуть</button></div>
 <p class="msg" aria-live="polite"></p>
-<p>Перетащите файл на окно · тяните кадр мышью · колесо — крупнее · Alt + колесо — поворот</p>
+<p class="hint"></p>
 `;
 
 const round = (v, digits) => Number(v.toFixed(digits));
 const megabytes = (n) => (n < 1e5 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 2 ** 20).toFixed(1).replace('.', ',')} МБ`);
-const READ_ONLY = 'Запись выключена: страница открыта не на том компьютере, где запущен сервер. Строку можно скопировать в src/media.js.';
+const READ_ONLY = 'Запись выключена: она работает по адресу localhost на том компьютере, где запущен сервер. Строку можно скопировать в src/media.js.';
 
 /**
  * A photo bigger than the film can use, scaled down for the upload (JPEG, sRGB, upright; its camera data — the place
  * it was taken at included — does not travel along). Resolves to { blob, from, to } or null: the file goes as it is.
  */
 async function shrink(file) {
-  if (!/^image\/(jpeg|webp|avif)$/.test(file.type) || typeof createImageBitmap !== 'function') return null;
-  let pic;
-  try { pic = await createImageBitmap(file); } catch { return null; }
-  const from = `${pic.width}×${pic.height}`;
-  let src = pic, w = pic.width, h = pic.height;
-  // by halves, then the rest: one big step would alias where the browser only filters bilinearly
-  while (Math.max(w, h) > MAX_SIDE) {
-    const k = Math.max(0.5, MAX_SIDE / Math.max(w, h)), c = document.createElement('canvas');
-    c.width = w = Math.max(1, Math.round(w * k)); c.height = h = Math.max(1, Math.round(h * k));
-    const g = c.getContext('2d');
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(src, 0, 0, w, h);
-    src = c;
-  }
-  pic.close?.();
-  if (src === pic) return null;
-  const blob = await new Promise((done) => src.toBlob(done, 'image/jpeg', 0.9));
-  return blob ? { blob, from, to: `${w}×${h}` } : null;
+  if (!/^image\/(jpeg|webp|avif)$/.test(file.type)) return null;
+  // through an <img>, as the film itself reads photos (core/assets.js): drawn from there, a photo is upright and in
+  // sRGB in every browser
+  const url = URL.createObjectURL(file), pic = new Image();
+  try {
+    pic.src = url;
+    await pic.decode();
+    let src = pic, w = pic.naturalWidth, h = pic.naturalHeight;
+    if (Math.max(w, h) <= MAX_SIDE) return null;
+    const from = `${w}×${h}`;
+    // by halves, then the rest: one big step would alias where the browser only filters bilinearly (and no step
+    // bigger than 16 megapixels: phones give a canvas no more)
+    while (Math.max(w, h) > MAX_SIDE) {
+      const k = Math.min(Math.max(0.5, MAX_SIDE / Math.max(w, h)), Math.sqrt(16e6 / (w * h))), c = document.createElement('canvas');
+      c.width = w = Math.max(1, Math.round(w * k)); c.height = h = Math.max(1, Math.round(h * k));
+      const g = c.getContext('2d', { alpha: false });
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(src, 0, 0, w, h);
+      if (src !== pic) src.width = src.height = 0;
+      src = c;
+    }
+    const blob = await new Promise((done) => src.toBlob(done, 'image/jpeg', 0.9));
+    src.width = src.height = 0;
+    return blob ? { blob, from, to: `${w}×${h}` } : null;
+  } catch { return null; } finally { URL.revokeObjectURL(url); }
 }
 
 export function startPlacer(player, openNow = false) {
@@ -138,7 +145,7 @@ export function startPlacer(player, openNow = false) {
     name: $('.nav span'), file: $('select'), pick: $('[data-a=pick]'), input: $('input[type=file]'), vals: $('.vals'),
     zoom: $('[data-a=zoom]'), turn: $('[data-a=turn]'), level: $('[data-a=level]'), reset: $('[data-a=reset]'),
     fixed: $('[data-a=fixed]'), move: $('[data-a=move]'), ends: $('.ends'), line: $('pre'),
-    save: $('[data-a=save]'), copy: $('[data-a=copy]'), undo: $('[data-a=undo]'), msg: $('.msg'),
+    save: $('[data-a=save]'), copy: $('[data-a=copy]'), undo: $('[data-a=undo]'), msg: $('.msg'), hint: $('.hint'),
   };
 
   const all = () => Object.values(slots).sort((a, b) => a.id.localeCompare(b.id));
@@ -148,7 +155,7 @@ export function startPlacer(player, openNow = false) {
   const userAt = (r, f) => r.users.find((u) => f >= u.ask.span[0] && f < u.ask.span[1] + 1) || null;      // the shot that draws it now
   const snap = (r) => JSON.stringify({ place: r.place, fixed: r.fixed });
   const loaded = new Map();      // window -> its placement as the file has it
-  const reread = () => { for (const r of all()) if (own(r)) loaded.set(r.name, snap(r)); };
+  const reread = (names) => { for (const r of all()) if (own(r) && (!names || names.includes(r.name))) loaded.set(r.name, snap(r)); };
   reread();
   const dirty = (r) => own(r) && snap(r) !== loaded.get(r.name);
   let server = { files: [], write: false, max: MAX_UPLOAD };
@@ -240,6 +247,8 @@ export function startPlacer(player, openNow = false) {
     const out = await send(entries);
     if (out.error) return say(`Сохранить не удалось (${out.error}). Строку можно скопировать и вставить в src/media.js.`, true);
     for (const [n, s] of stamp) loaded.set(n, s);
+    // the file now says what was on the screen when it was sent: its change coming back must not move pictures again
+    for (const e of entries) { const r = all().find((x) => x.id === e.id); if (r) adoptSettings(r.name, e.settings); }
     say(entries.length > 1 ? `Сохранено в src/media.js: ${entries.map((e) => e.id).join(', ')}.` : 'Сохранено в src/media.js.');
   }
   /**
@@ -261,7 +270,7 @@ export function startPlacer(player, openNow = false) {
     // a changed media.js reloads the page by itself (core/slots.js); the timer is for a page without that connection
     setTimeout(() => location.reload(), out.changed ? 1500 : 0);
   }
-  async function upload(file, r) {
+  async function upload(file, r, more = 0) {
     if (!server.write) return say(READ_ONLY, true);
     let name = safeName(file.name);
     if (!name) {
@@ -270,17 +279,20 @@ export function startPlacer(player, openNow = false) {
     }
     player.pause();
     say(`Загружаю ${name}…`);
-    let body = file, what = '';
+    let body = file;
+    const what = [];
     const small = await shrink(file);
-    if (small) { body = small.blob; name = name.replace(/\.[^.]+$/, '.jpg'); what = ` (уменьшен: ${small.from} → ${small.to})`; }
+    if (small) { body = small.blob; name = name.replace(/\.[^.]+$/, '.jpg'); what.push(`уменьшен: ${small.from} → ${small.to}`); }
     if (body.size > server.max) return say(`Файл больше ${Math.round(server.max / 2 ** 20)} МБ — окну на несколько секунд столько не нужно. Сожмите его.`, true);
     try {
       const res = await fetch(api(`/file?name=${encodeURIComponent(name)}`), { method: 'POST', body });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error === 'read-only' ? 'запись выключена' : data.error || `ответ ${res.status}`);
       name = data.name;
+      if (data.replaced) what.push('заменил прежний файл с этим именем');
     } catch (e) { return say(`Загрузить не удалось (${e.message}).`, true); }
-    await assign(r, `media/${name}`, `${name} — в окне ${r.id}${what}.`, true);
+    if (more) what.push('из нескольких файлов взят первый');
+    await assign(r, `media/${name}`, `${name} — в окне ${r.id}${what.length ? ` (${what.join('; ')})` : ''}.`, true);
   }
 
   // ---- panel ----------------------------------------------------------------------------------
@@ -300,11 +312,13 @@ export function startPlacer(player, openNow = false) {
   function refresh() {
     const r = sel && slots[sel], f = frame();
     lastFrame = f;
+    touch();      // whatever was changed, the paused film has to be drawn again
     if (!r) return;
     const mine = own(r), src = cfgOf(r).src || '', on = f >= r.f0 - 1 && f <= r.f1 + 1, todo = pending();
     put(el.name, `${r.id} · кадры ${r.f0}–${r.f1}`);
     fillList(r, src);
     el.file.disabled = el.pick.disabled = !server.write;
+    put(el.hint, `${server.write ? 'Перетащите файл на окно · т' : 'Т'}яните кадр мышью · колесо — крупнее · Alt + колесо — поворот`);
     for (const b of [el.zoom, el.turn, el.level, el.reset, el.fixed, el.move, el.copy]) b.disabled = !mine;
     el.save.disabled = !server.write || !todo.length;
     put(el.save, todo.length > 1 ? `Сохранить в media.js (${todo.length})` : 'Сохранить в media.js');
@@ -493,7 +507,7 @@ export function startPlacer(player, openNow = false) {
     const [x, y] = toVideo(e), r = pick(x, y) || (sel && slots[sel]), files = e.dataTransfer.files;
     if (!files.length || !r) return;
     select(r.name);
-    upload(files[0], r);
+    upload(files[0], r, files.length - 1);
   });
 
   // ---- name tags on the windows ----------------------------------------------------------------
@@ -533,8 +547,9 @@ export function startPlacer(player, openNow = false) {
     requestAnimationFrame(tick);
   })();
 
-  // media.js was edited and its numbers taken over under the running film (core/slots.js): the file's state is new
-  window.addEventListener('media-settings', () => { reread(); refresh(); });
+  // media.js was edited and its numbers taken over under the running film (core/slots.js): for the windows it moved,
+  // what is on the screen is now what the file says
+  window.addEventListener('media-settings', (e) => { reread(e.detail || []); refresh(); });
 
   let stored = null;
   try { stored = JSON.parse(sessionStorage.getItem('placer') || 'null'); note = sessionStorage.getItem('placer-note') || ''; } catch { /* private mode */ }

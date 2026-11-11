@@ -5,9 +5,10 @@
 // What a page can do through it: add a photo / video to public/media/ and change the windows' lines in src/media.js.
 // Nothing else — the lines are made here from checked values (mediaLine.js), a window can only be pointed at a file
 // that is in public/media/, and file names are reduced to a plain name with a known extension.
-// Who may: the page itself (same origin), opened on this computer. The dev server listens on all interfaces
-// (vite.config.js), so for another machine — or through a proxy — the tool is read-only: it still shows the line to
-// copy. `MEDIA_TOOL=remote npm run dev` lets those write too.
+// Who may: the page itself (same origin), opened on this computer at localhost. The dev server listens on all
+// interfaces and answers to any host name (vite.config.js), so for another machine, through a proxy, or under a host
+// name that merely points here, the tool is read-only: it still shows the line to copy.
+// `MEDIA_TOOL=remote npm run dev` lets those write too.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,10 +21,10 @@ const WINDOW = /^w(0[1-9]|1[01])$/;
 
 /** The photos and videos in public/media/: [{ name, size }], by name. */
 function listFiles() {
-  let names = [];
-  try { names = fs.readdirSync(DIR); } catch { /* no folder yet */ }
-  return names.filter((n) => !n.startsWith('.') && MEDIA_FILE.test(n))
-    .map((name) => ({ name, size: fs.statSync(path.join(DIR, name)).size }))
+  let found = [];
+  try { found = fs.readdirSync(DIR, { withFileTypes: true }); } catch { /* no folder yet */ }
+  return found.filter((d) => d.isFile() && !d.name.startsWith('.') && MEDIA_FILE.test(d.name))
+    .map((d) => ({ name: d.name, size: fs.statSync(path.join(DIR, d.name)).size }))
     .sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
 }
 
@@ -35,10 +36,12 @@ function sameOrigin(req) {
   try { return [req.headers.host, req.headers['x-forwarded-host']].includes(new URL(origin).host); } catch { return false; }
 }
 
-/** Is the page open on this computer, with no proxy in between? */
+/** Is the page open on this computer, at localhost, with no proxy in between? */
 function local(req) {
-  const a = req.socket.remoteAddress || '';
-  return (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.')) && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
+  const a = req.socket.remoteAddress || '', host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  // the host name too: another site's name can be made to point at 127.0.0.1, and its page would then be "the same origin"
+  return (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.')) && ['localhost', '127.0.0.1', '[::1]'].includes(host)
+    && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
 }
 
 /** Writes the entries [{ id, settings | null }] into src/media.js (null takes the window's line out). */
@@ -87,8 +90,9 @@ function takeFile(req, res, rawName, reply) {
     if (done) return;
     if (!size) return fail(400, 'empty file');
     done = true;
+    const replaced = fs.existsSync(path.join(DIR, name));
     try { fs.renameSync(tmp, path.join(DIR, name)); } catch (e) { fs.rm(tmp, { force: true }, () => {}); return reply(500, { error: String(e.message) }); }
-    reply(200, { ok: true, name, size });
+    reply(200, { ok: true, name, size, replaced });
   });
   req.pipe(out);
 }
