@@ -135,6 +135,9 @@ const player = {
 
   toggle() { this.playing ? this.pause() : this.play(); },
 
+  /** Dev server: puts the paused frame into the address right now (the placement tool, before it reloads the page). */
+  keepFrame() { rememberFrame(true); },
+
   setSound(on) {
     this.sound = on;
     if (!this.audio) return;
@@ -149,15 +152,17 @@ window.__stage = stage;
 // Dev server only: a paused film keeps its frame in the address (?f=…&paused), so the page comes back to the same
 // picture when it reloads after an edit — that is how the media in the windows is placed (src/media.js).
 let remembering = 0;
-function rememberFrame() {
+function rememberFrame(now = false) {
   if (!import.meta.env.DEV || window.__manual) return;
   clearTimeout(remembering);
-  remembering = setTimeout(() => {      // once things settle: browsers limit how often the address may change
+  const write = () => {
     const rest = location.search.slice(1).split('&').filter((q) => q && !/^(f|t|paused)(=|$)/.test(q));
     const q = (player.playing ? rest : [`f=${Math.round(timeToFrame(player.time))}`, 'paused', ...rest]).join('&');
     const url = location.pathname + (q ? '?' + q : '') + location.hash;
     if (url !== location.pathname + location.search + location.hash) try { history.replaceState(null, '', url); } catch { /* the address is a convenience */ }
-  }, 250);
+  };
+  // once things settle: browsers limit how often the address may change (`now`: the page is about to be loaded again)
+  if (now) write(); else remembering = setTimeout(write, 250);
 }
 
 // Render resolution: the device's own pixels, up to 3072x1728 (a 14-16" retina display in full screen). The footage
@@ -288,4 +293,7 @@ loadAssets(FOOTAGE).then((assets) => {
   }
   window.__ready = true;
   requestAnimationFrame(tick);
+
+  // Dev server only: the placement tool (key E, or ?edit) — drag a picture inside its window and save its line
+  if (import.meta.env.DEV && !window.__manual) import('./dev/placer.js').then((m) => m.startPlacer(player, params.has('edit')));
 });

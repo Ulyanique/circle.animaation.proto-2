@@ -288,6 +288,18 @@ export function makeShot(def, data, assets) {
     const polys = data.polys.filter((p) => p.screen === i + 1)
       .map((p) => p.v.map((a) => { q.set(a[0], a[1], a[2]).sub(O); return [q.dot(Ux) / Ux.lengthSq(), q.dot(Vy) / Vy.lengthSq()]; }));
     const at = (u, v) => [O.x + Ux.x * u + Vy.x * v, O.y + Ux.y * u + Vy.y * v, O.z + Ux.z * u + Vy.z * v];
+    // [u, v] in the screen's own uv of the point where the ray through picture point (x, y) meets the window's plane at
+    // frame f, or null
+    const nrm = new THREE.Vector3().crossVectors(Ux, Vy), ray = new THREE.Vector3();
+    const planeUv = (f, x, y) => {
+      const c = rig.pose(f);
+      rig.unproject(f, x, y, 1, ray);
+      ray.x -= c[0]; ray.y -= c[1]; ray.z -= c[2];
+      const t = ((O.x - c[0]) * nrm.x + (O.y - c[1]) * nrm.y + (O.z - c[2]) * nrm.z) / ray.dot(nrm);
+      if (!(t > 0) || !Number.isFinite(t)) return null;
+      q.set(c[0] + ray.x * t, c[1] + ray.y * t, c[2] + ray.z * t).sub(O);
+      return [q.dot(Ux) / Ux.lengthSq(), q.dot(Vy) / Vy.lengthSq()];
+    };
     // the window is "on" from the frame its picture starts to show (videos and `to` moves count from there)
     const reveal = param(easedRamp(sd.reveal ?? 1));
     let shown = range[0];
@@ -300,19 +312,11 @@ export function makeShot(def, data, assets) {
       // frames [first, last] of this shot at which the window, with its picture on, is in the frame at all
       // (rays from a grid of picture points to the window's plane), or null
       frames: () => {
-        const n = new THREE.Vector3().crossVectors(Ux, Vy), w = new THREE.Vector3();
         const seen = (f) => {
-          const c = rig.pose(f);
-          const h = (O.x - c[0]) * n.x + (O.y - c[1]) * n.y + (O.z - c[2]) * n.z;
           for (let y = 30; y < VIDEO_H; y += 60) {
             for (let x = 40; x < VIDEO_W; x += 80) {
-              rig.unproject(f, x, y, 1, w);
-              w.x -= c[0]; w.y -= c[1]; w.z -= c[2];
-              const t = h / w.dot(n);
-              if (!(t > 0) || !Number.isFinite(t)) continue;
-              q.set(c[0] + w.x * t, c[1] + w.y * t, c[2] + w.z * t).sub(O);
-              const u = q.dot(Ux) / Ux.lengthSq(), v = q.dot(Vy) / Vy.lengthSq();
-              if (polys.some((p) => inPolygon(p, u, v))) return true;
+              const h = planeUv(f, x, y);
+              if (h && polys.some((p) => inPolygon(p, h[0], h[1]))) return true;
             }
           }
           return false;
@@ -322,6 +326,12 @@ export function makeShot(def, data, assets) {
         while (b > a && !seen(b)) b--;
         return a <= b ? [a, b] : null;
       },
+      // picking: where the ray through picture point (x, y) meets the window's plane, is that inside the window, and
+      // where the middle of a uv box is in the picture
+      uv: planeUv,
+      inside: (u, v) => polys.some((p) => inPolygon(p, u, v)),
+      centre: (f, b) => rig.project(f, at((b[0] + b[1]) / 2, (b[2] + b[3]) / 2), {}),
+      fixed: (on) => { U.uScrFixed.value[i] = on ? 1 : 0; },
       shape: (b) => (Ux.length() * (b[1] - b[0])) / (Vy.length() * (b[3] - b[2])),
       tilt: () => {      // how far the window's x axis is turned on the screen in the middle of the shot, degrees clockwise
         const fm = (range[0] + range[1]) / 2, a = rig.project(fm, at(0.5, 0.5), {}), b = rig.project(fm, at(0.55, 0.5), {});

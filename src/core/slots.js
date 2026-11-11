@@ -22,13 +22,19 @@ const ID = Object.fromEntries(Object.entries(SLOTS).map(([id, name]) => [name, i
  * close over it, so media pinned to the window would only ever show a strongly enlarged, sliding piece of itself.
  */
 const FIXED = { w04: true };
+export const fixedByDefault = (id) => !!FIXED[id];
 
-const chosen = {};
-for (const [key, cfg] of Object.entries(settings || {})) {
-  if (!cfg || !cfg.src) continue;
-  if (!SLOTS[key]) { console.warn(`media.js: no window "${key}" (use w01 … w11)`); continue; }
-  chosen[SLOTS[key]] = cfg;
+/** The settings of media.js by screen name (lines without a file or for a window that does not exist are skipped). */
+function choose(all, warn) {
+  const out = {};
+  for (const [key, cfg] of Object.entries(all || {})) {
+    if (!cfg || !cfg.src) continue;
+    if (!SLOTS[key]) { if (warn) console.warn(`media.js: no window "${key}" (use w01 … w11)`); continue; }
+    out[SLOTS[key]] = cfg;
+  }
+  return out;
 }
+const chosen = choose(settings, true);
 /**
  * `?card` in the address: every window shows a 16:9 test card instead of its picture, placed by the window's own
  * settings — the quickest way to see which part of a horizontal frame each window takes.
@@ -39,21 +45,55 @@ export const mediaFor = (name) => chosen[name] || (CARD ? {} : null);
 export const isVideo = (src) => /\.(mp4|webm|m4v|mov|ogv)([?#].*)?$/i.test(src);
 
 /**
- * Affine map [a, b, c, d, tx, ty] from the window's box (uv 0..1, x right, y down) to media uv:
- * media = (a*u + b*v + tx, c*u + d*v + ty). W, H = size of the box, aspect = media width / height.
+ * How media of shape `aspect` (width / height) lies over a box W × H that it covers ("object-fit: cover") at the zoom
+ * and rotation of `p`: the linear part [a, b; c, d] of the map from box uv (0..1, x right, y down) to media uv, and
+ * the range its focus point may take without uncovering a corner of the box (x0..x1 across, y0..y1 down, media uv).
  */
-export function fitMatrix(W, H, aspect, p) {
+export function fitParts(W, H, aspect, p) {
   const th = (p.rotate * Math.PI) / 180, c = Math.cos(th), s = Math.sin(th);
   // half-extents of the box along the media's own axes: the (rotated) media must reach that far from its focus
   const hw = (Math.abs(c) * W + Math.abs(s) * H) / 2, hh = (Math.abs(s) * W + Math.abs(c) * H) / 2;
   const Hm = Math.max(2 * hh, (2 * hw) / aspect) * Math.max(1, p.zoom), Wm = Hm * aspect;      // size of the media, box units
-  const fx = lerp(hw / Wm, 1 - hw / Wm, clamp(p.x)), fy = lerp(hh / Hm, 1 - hh / Hm, clamp(p.y));
-  const a = (c * W) / Wm, b = (s * H) / Wm, cc = (-s * W) / Hm, d = (c * H) / Hm;
-  return [a, b, cc, d, fx - (a + b) / 2, fy - (cc + d) / 2];
+  return { a: (c * W) / Wm, b: (s * H) / Wm, c: (-s * W) / Hm, d: (c * H) / Hm, x0: hw / Wm, x1: 1 - hw / Wm, y0: hh / Hm, y1: 1 - hh / Hm };
 }
 
-const registry = {};      // screen name -> { id, name, f0, f1, aspect, tilt, kind, src, video, cfg, … }
+/**
+ * Affine map [a, b, c, d, tx, ty] from the window's box (uv 0..1, x right, y down) to media uv:
+ * media = (a*u + b*v + tx, c*u + d*v + ty). W, H = size of the box, aspect = media width / height.
+ */
+export function fitMatrix(W, H, aspect, p) {
+  const m = fitParts(W, H, aspect, p);
+  const fx = lerp(m.x0, m.x1, clamp(p.x)), fy = lerp(m.y0, m.y1, clamp(p.y));
+  return [m.a, m.b, m.c, m.d, fx - (m.a + m.b) / 2, fy - (m.c + m.d) / 2];
+}
+
+const registry = {};      // screen name -> { id, name, f0, f1, aspect, tilt, box, kind, src, cfg, place, fixed, video, users }
 if (typeof window !== 'undefined') window.__slots = registry;
+/** The windows by screen name (read by the placement tool of the dev server and by the checking tools). */
+export const slots = registry;
+
+const number = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : d);
+const placeKey = (o, d) => ({ x: number(o.x, d.x), y: number(o.y, d.y), zoom: number(o.zoom, d.zoom), rotate: o.rotate === 'level' ? 'level' : number(o.rotate, d.rotate) });
+/** Settings -> the placement as live values: where it starts (`base`) and, with a `to` move, where it ends (`end`). */
+function placeOf(cfg) {
+  const base = placeKey(cfg, { x: 0.5, y: 0.5, zoom: 1, rotate: 0 });
+  return { base, end: cfg.to && typeof cfg.to === 'object' ? placeKey(cfg.to, base) : null };
+}
+
+/** The placement { x, y, zoom, rotate } of a window's own media at frame f (rotate in degrees, 'level' resolved). */
+export function placeAt(r, f) {
+  const { base, end } = r.place;
+  const angle = (v) => (v === 'level' ? (r.fixed ? 0 : -r.tilt) : Number(v) || 0);
+  if (!end) return { x: base.x, y: base.y, zoom: base.zoom, rotate: angle(base.rotate) };
+  const t = clamp((f - r.f0) / Math.max(1, r.f1 - r.f0));
+  return { x: lerp(base.x, end.x, t), y: lerp(base.y, end.y, t), zoom: lerp(base.zoom, end.zoom, t), rotate: lerp(angle(base.rotate), angle(end.rotate), t) };
+}
+
+/** Pins a window's media to the picture (`fixed`) or to the window. */
+export function setFixed(r, on) {
+  r.fixed = !!on;
+  for (const u of r.users) if (u.own) u.ask.fixed(r.fixed);
+}
 
 /**
  * Called by every shot for every screen it shows; `range` = frames the window's picture is on, `primary` = the window
@@ -65,6 +105,8 @@ if (typeof window !== 'undefined') window.__slots = registry;
  *   shape(b) width / height of such a uv box in the shot's world
  *   tilt()   how far the window's x axis is turned on the screen, degrees clockwise
  *   apply(b) point the shot's screen rectangle at the uv box (custom media only)
+ *   fixed(on) switch the shot's shader between media pinned to the picture and media pinned to the window
+ *   uv(f, x, y), inside(u, v), centre(f)   picking, for the placement tool (see shots/shot.js)
  * Returns the per-frame fit [a, b, c, d, tx, ty] for custom media, or null. Valid once finishSlots() has run.
  */
 export function registerSlot(name, range, primary, media, ask) {
@@ -73,22 +115,16 @@ export function registerSlot(name, range, primary, media, ask) {
   r.users.push({ primary, ask, own: !!media });
   if (!media) return null;
   const cfg = media.cfg, aspect = media.width / media.height;
-  r.kind = media.kind; r.src = cfg.src;
-  if (media.video && !r.video) { r.video = media.video; r.cfg = cfg; }
+  r.kind = media.kind; r.src = cfg.src; r.cfg = cfg; r.shape = aspect;
+  if (media.video && !r.video) r.video = media.video;
   // `fixed`: the media covers the picture, not the window — the window is a cut-out over it and the camera's flight
   // does not move it (background-attachment: fixed, in CSS terms)
-  const fixed = r.fixed = cfg.fixed ?? FIXED[r.id] ?? false;
-  const base = { x: cfg.x ?? 0.5, y: cfg.y ?? 0.5, zoom: cfg.zoom ?? 1, rotate: cfg.rotate ?? 0 };
-  const end = cfg.to ? { ...base, ...cfg.to } : null;
-  const angle = (v) => (v === 'level' ? (fixed ? 0 : -r.tilt) : Number(v) || 0);
-  const fit = (f) => {
-    const t = end ? clamp((f - r.f0) / Math.max(1, r.f1 - r.f0)) : 0;
-    const p = end
-      ? { x: lerp(base.x, end.x, t), y: lerp(base.y, end.y, t), zoom: lerp(base.zoom, end.zoom, t), rotate: lerp(angle(base.rotate), angle(end.rotate), t) }
-      : { ...base, rotate: angle(base.rotate) };
-    return fitMatrix(fixed ? VIDEO_W / VIDEO_H : r.aspect, 1, aspect, p);
-  };
-  fit.fixed = fixed;
+  r.fixed = cfg.fixed ?? FIXED[r.id] ?? false;
+  // the placement is kept as live values: on the dev server they change under a running film — when media.js is
+  // edited (below) and in the placement tool
+  if (!r.place) r.place = placeOf(cfg);
+  const fit = (f) => fitMatrix(r.fixed ? VIDEO_W / VIDEO_H : r.aspect, 1, aspect, placeAt(r, f));
+  fit.fixed = r.fixed;
   return fit;
 }
 
@@ -154,6 +190,31 @@ export function syncVideos(f, playing, speed = 1) {
       if (Math.abs(off) > 0.02 && !el.seeking) el.currentTime = t;
     }
   }
+}
+
+// Dev server: an edit of media.js that only moves pictures (x, y, zoom, rotate, to, fixed) shows at once, under the
+// running film. Anything else — another file, a video's timing — loads the page again.
+if (import.meta.hot) {
+  const PLACING = ['x', 'y', 'zoom', 'rotate', 'to', 'fixed'];
+  const rest = (cfg) => JSON.stringify(Object.keys(cfg).filter((k) => !PLACING.includes(k)).sort().map((k) => [k, cfg[k]]));
+  const applySettings = (next) => {
+    const want = choose(next, false);
+    for (const name of new Set([...Object.keys(chosen), ...Object.keys(want)])) {
+      if (!chosen[name] || !want[name] || rest(chosen[name]) !== rest(want[name])) return false;
+    }
+    for (const [name, cfg] of Object.entries(want)) {
+      chosen[name] = cfg;
+      const r = registry[name];
+      if (!r || !r.place) continue;      // its file did not load: the placeholder is on
+      r.cfg = cfg; r.place = placeOf(cfg);
+      setFixed(r, cfg.fixed ?? FIXED[r.id] ?? false);
+    }
+    return true;
+  };
+  import.meta.hot.accept('../media.js', (mod) => {
+    if (mod && applySettings(mod.default)) window.dispatchEvent(new Event('media-settings'));
+    else location.reload();
+  });
 }
 
 // nothing is drawn while the tab is hidden: the videos must not run on meanwhile (they resume with the next frame)

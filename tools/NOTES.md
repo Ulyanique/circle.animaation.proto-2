@@ -168,8 +168,35 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   (`dt / raw` in the tick, 1 unless frames take over 100 ms) is fed forward — without it the video ran ahead and jumped
   back about once a second under the software renderer. Hidden tab → videos paused. `tools/vsync.mjs` measures it.
 - **Tuning conveniences.** Dev server only: a paused film keeps `?f=N&paused` in the address (`rememberFrame` in
-  `main.js`), so the full reload after an edit of `media.js` returns to the same frame. `?card` puts a 16:9 test card
-  (`makeCard` in `assets.js`) into every window, placed by the window's own settings.
+  `main.js`), so a reload after an edit of `media.js` returns to the same frame. An edit that only moves pictures
+  (x, y, zoom, rotate, to, fixed) does not reload at all: `slots.js` accepts the hot update of `media.js` and puts the
+  new numbers into the live records (`r.place = { base, end }`, `setFixed`); anything else — another file, a video's
+  timing — calls `location.reload()`. `?card` puts a 16:9 test card (`makeCard` in `assets.js`) into every window,
+  placed by the window's own settings.
+- **Placement tool** (`src/dev/`, key E or `?edit`; dev server only — `main.js` imports it under
+  `import.meta.env.DEV`, the server side is a vite plugin with `apply: 'serve'`):
+  - `placer.js` — the panel. Picking: `slots[name].users[i].ask.uv(f, x, y)` (ray through a picture point → the
+    window's uv, `planeUv` in `shot.js`) + `inside(u, v)`. A drag keeps the grabbed media point under the cursor: media
+    uv = linear part × box point + focus (`fitParts` in `slots.js`), solved for x / y; the wheel changes zoom or
+    rotation and then re-solves x / y for the point under the cursor. Live values are rounded to what the line holds
+    (3 decimals, rotation 1), so the saved line reloads to the identical picture. With a `to` move the key nearer in
+    time is edited (start before the middle of the window's frames, end after), by the weight it has at that frame.
+  - `mediaLine.js` — shared by page and server: `mediaLine(id, cfg)` (one line, defaults left out), `cleanSettings`,
+    `safeName`, `putLine` / `dropLine` / `entryText` on the text of `src/media.js` (one window per line; entries of
+    several lines and trailing comments are handled; commented-out entries are left alone).
+  - `mediaServer.js` — `GET /__media` → `{ files, write, max }`; `POST /__media` `{ entries: [{ id, settings | null }] }`
+    → one write of `src/media.js`; `POST /__media/file?name=` (raw body) → `public/media/<safe name>`, 95 MB at most.
+    A window can only be pointed at a file that is in `public/media/` (or keep the address its line already has).
+    POST needs the same origin and a client on this machine with no proxy headers; otherwise the page gets
+    `write: false` and the panel only shows the line. `MEDIA_TOOL=remote` lifts the "this machine" part — **start the
+    dev server that way for the Arena preview** (`MEDIA_TOOL=remote npm run dev`), where the user sits behind a proxy.
+  - A new file means a reload (pictures are loaded at boot): the page keeps its frame (`player.keepFrame()`), the
+    panel its state and a note (sessionStorage). Photos over 4096 px are scaled down in the page before the upload
+    (canvas → JPEG 0.9; orientation applied, colours converted to sRGB, camera data dropped).
+  - Tests: `node tools/linetest.mjs` (plain node; the line and the file's text) and `placertest.mjs` (headless, about
+    8 min under the software renderer: the server's refusals, a real mouse on the page, pixel comparison of a drag,
+    saving without reload, files from the list / the button / dropped / shrunk, the read-only page). `placertest`
+    makes its own `_test_*` pictures and puts `src/media.js` back as it found it.
 - **Tools.** `slotshot.mjs F1,F2,.. OUTDIR [W H]` (frames with the videos settled; prints `window.__slots`; `QUERY=card`),
   `slotinfo.mjs` (the numbers of the README table), `slotmap.py NOW_DIR CARD_DIR OUT.jpg` (the map):
 
@@ -177,9 +204,9 @@ Any photo or video in any window. User-facing description: README, «Свои ф
       QUERY=card node slotshot.mjs 172,215,285,362,415,508,528,552,610,710,870 /tmp/work/map_card
       python tools/slotmap.py /tmp/work/map_now /tmp/work/map_card docs/windows.jpg
 
-  Test media: anything named `public/media/_*` is git-ignored. A numbered card: any image with a grid and corner
+  Test media: anything named `public/media/_test_*` is git-ignored. A numbered card: any image with a grid and corner
   labels; a clip with something moving at a known speed:
-  `ffmpeg -loop 1 -i _card.jpg -f lavfi -i color=c=red:s=60x60:r=24 -filter_complex "[0:v]scale=1280:720:out_range=tv:out_color_matrix=bt709,format=yuv420p[bg];[bg][1:v]overlay=x='100+t*150':y=40,format=yuv420p" -t 6 -r 24 -c:v libx264 -color_range tv -colorspace bt709 -movflags +faststart _clip.mp4`.
+  `ffmpeg -loop 1 -i _test_card.jpg -f lavfi -i color=c=red:s=60x60:r=24 -filter_complex "[0:v]scale=1280:720:out_range=tv:out_color_matrix=bt709,format=yuv420p[bg];[bg][1:v]overlay=x='100+t*150':y=40,format=yuv420p" -t 6 -r 24 -c:v libx264 -color_range tv -colorspace bt709 -movflags +faststart _clip.mp4`.
 - **Numbers** (`slotinfo.mjs`; aspect of the seen box, share of the picture covered, width of a 16:9 photo shown 1:1
   on a 1920 px picture — median / closest): w01 0.86, 35 %, 1980 / 2140; w02 1.74, 95 %, 2310 / 2390; w03 0.78, 33 %,
   2090 / 2770; w04 1.01, 100 %, 6670 / 7920 (hence fixed); w05 1.02, 44 %, 2380 / 6480; w06 0.90, 31 %, 2400 / 4320;

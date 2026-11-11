@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import mediaTool from './src/dev/mediaServer.js';      // dev server only: the placement tool (key E on the page)
 
 // The shot data files (src/shots/data/sNN.json) also carry what only the tools need: the raw tracked camera, the light
 // trails tracked in the reference video and its flare track. The player reads none of it, so it is not shipped.
@@ -15,7 +16,7 @@ const slimShotData = () => ({
 
 export default defineConfig({
   base: './',
-  plugins: [slimShotData()],
+  plugins: [slimShotData(), mediaTool()],
   server: {
     host: '0.0.0.0',
     port: 5173,

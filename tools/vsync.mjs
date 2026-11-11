@@ -1,5 +1,5 @@
 // vsync.mjs — does a video in window w08 stay on the film's clock? Needs a video set for w08 in src/media.js
-// (any short clip; test files named public/media/_* are git-ignored). Plays from 21.6 s, prints the film frame, the
+// (any short clip; test files named public/media/_test_* are git-ignored). Plays from 21.6 s, prints the film frame, the
 // time the video should show and the time it shows, every 0.3 s; then pauses and prints the same once more.
 // VW / VH / DPR choose the page size: a small page (VW=128 VH=72 DPR=0.5) renders at the display rate — the normal
 // case; 640×360 under the software renderer takes over 100 ms per frame, the film then runs slower than the wall
