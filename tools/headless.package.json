@@ -1,0 +1,10 @@
+{
+  "name": "headless-check",
+  "private": true,
+  "type": "module",
+  "description": "Only for the checking scripts in tools/ (frame-by-frame renders in headless Chromium). Not a dependency of the site.",
+  "dependencies": {
+    "@sparticuz/chromium": "153.0.0",
+    "puppeteer-core": "25.17.0"
+  }
+}
