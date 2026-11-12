@@ -375,7 +375,7 @@ test('hero media sections preserve complete UV coverage, fade geometry and deter
   assert.ok(Math.abs(area(vertices)-area(revealTriangles(p,reverse)))<1e-10,'no source crop or duplicated regions');
   for(const vertex of vertices)assert.ok(Object.values(vertex).every(Number.isFinite)&&vertex.u>=-1e-10&&vertex.u<=1+1e-10&&vertex.alpha>=0&&vertex.alpha<=1);
  }
- assert.equal(assemblyProgress(5.4,5.4),0);assert.equal(assemblyProgress(8.7,5.4),1);
+ assert.equal(assemblyProgress(3.8,5.4),0);assert.equal(assemblyProgress(7.1,5.4),1);
  assert.equal(heroShotWeight(0),0);assert.equal(heroShotWeight(7),1);assert.equal(heroShotWeight(10),0);
  assert.ok(Math.abs(area(sectionedTriangles(1))-1)<1e-10);
 });
@@ -679,4 +679,16 @@ test('cards alternate screen sides and face the viewer without tracking rotation
   panel.traverse(object=>object.geometry?.dispose());panel.frame.material.dispose();panel.face.material.dispose();panel.back.material.dispose();
  }
  material.dispose();
+});
+
+test('sections are motionless before full reveal and remain settled in reading windows',async()=>{
+ const {assemblyProgress,sectionOffset}=await import('../src/sectioned-media.js');
+ for(let i=0;i<10;i++){
+  const reveal=i===0?5.4:4+i*5;
+  assert.equal(assemblyProgress(reveal+1.7,reveal),1);
+  for(const mode of ['triptych','diptych'])for(let section=0;section<(mode==='triptych'?3:2);section++){
+   const settled=sectionOffset(section,1,mode);
+   for(let t=reveal+2;t<reveal+4.2;t+=.05)assert.deepEqual(sectionOffset(section,assemblyProgress(t,reveal),mode),settled);
+  }
+ }
 });

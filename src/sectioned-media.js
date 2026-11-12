@@ -42,7 +42,8 @@ export function sectionedTriangles(progress,reverse=false,assembly=1,mode='tript
  return result;
 }
 export function assemblyProgress(time,revealTime){
- const u=Math.max(0,Math.min(1,(time-revealTime)/3.2));
+ // Pre-roll assembly under the early reveal; do not move a fully readable image.
+ const u=Math.max(0,Math.min(1,(time-(revealTime-1.6))/3.2));
  return u*u*u*(10-15*u+6*u*u);
 }
 export function seamEndpoints(cut,mode='triptych'){
