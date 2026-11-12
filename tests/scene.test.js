@@ -692,3 +692,16 @@ test('sections are motionless before full reveal and remain settled in reading w
   }
  }
 });
+
+test('media beam loops protect the central image and mirror into both stage sides',async()=>{
+ const {mediaOrbitKnots,sampleLightSpline}=await import('../src/choreography.js');
+ const right=mediaOrbitKnots(0),left=mediaOrbitKnots(1);
+ for(let i=0;i<right.length;i++){
+  assert.equal(left[i][1],-right[i][1]);assert.equal(left[i][2],right[i][2]);assert.equal(left[i][3],right[i][3]);
+ }
+ for(let t=0;t<=2;t+=.002){
+  const [x,y,z]=sampleLightSpline(right,t);
+  assert.ok(z>0,'front portion stays in front');
+  assert.ok(Math.abs(x)>.5||y<-.35,'bright core does not cross the central image on front pass');
+ }
+});

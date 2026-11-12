@@ -372,3 +372,9 @@ Staged odd/even shots on opposite sides of the forward camera lane (±4.8 units)
 Moved sectional assembly 1.6 seconds earlier without changing its 3.2-second duration or easing. Assembly therefore finishes 1.6 seconds after reveal starts, before the two-second geometric reveal completes, instead of continuing to move while the source is fully readable. Final seams, left/right placement, static viewer-facing orientation, camera and finale remain unchanged. Added invariance tests for settled triptych/diptych sections across all ten reading windows.
 
 49 tests and production build pass. Desktop portable Chromium captured 7.6/17.2 seconds, ten slots and zero errors; 17.2-second diptych inspected. Captures validate composition, not hardware real-time smoothness. Existing bundle warning remains.
+
+### Edge-led beam choreography
+
+Moved the primary front pass to the lower image margin (normalised y=-.43) with a shallower 1.2–1.3-unit front offset, then around the outer edge and behind the upper image area. Removed triptych/diptych overrides that previously drove the bright head through image centres/seams. Loops mirror for left-side cards so entry comes from the central lane on both sides; shared continuous world-space bridge interpolation remains. Camera, card staging and finale unchanged. This protects a generic central region, not detected faces; real assets still need art direction.
+
+50 tests/build pass. New tests cover mirrored loop anchors and central-region clearance of the local front segment; existing C2 flight and bridge framing tests remain passing. Desktop portable Chromium captures at 7.2/12.2/17.2 returned ten slots and zero errors; 7.2/17.2 inspected. Recaptured 385 offline frames over 4–20 seconds and encoded `motion-edge-beam.mp4`, no page errors. This is reduced-quality motion review, not a hardware FPS benchmark. Existing bundle warning remains.

@@ -25,7 +25,7 @@ import { createTitleGeometry } from './title-geometry.js';
 import titleFont from './fonts/title.json';
 import { mediaSources, shots, DURATION, FINALE, SHOT_INTERVAL, PANEL_SPACING, FIRST_PANEL_Z, panelEnvelope, beamEnvelope } from './media-config.js';
 import { MediaPanel } from './media-panels.js';
-import { orbitOffsets, travellingCameraPose, trailOpacity, lightBridgePoint } from './choreography.js';
+import { mediaOrbitKnots, travellingCameraPose, trailOpacity, lightBridgePoint } from './choreography.js';
 
 
 let savedStorage;try{savedStorage=localStorage;}catch{}
@@ -132,13 +132,8 @@ function rebuildSnakePath() {
  snakePath=[[0,-2,-1,5],[1.4,2.6,-.8,-3],[2.6,3.4,1.4,-8],[3.7,-.6,1.7,-11],[4.8,-4.2,-.8,-12.5]];
  for(const panel of panels){
   panel.updateMatrixWorld(true);
-  for(const [offset,x,y,z] of orbitOffsets){
+  for(const [offset,x,y,z] of mediaOrbitKnots(panel.index)){
    let localX=x,localY=y,localZ=z;
-   if(offset<=1.1){
-    if(panel.presentation==='triptych')localY=-.16-.14*x;
-    else if(panel.presentation==='diptych'){localY=offset===0?-.35:.28;localX=-.08*localY;localZ=.5;}
-    else if(panel.index===1)localY=-.32;
-   }
    const point=new THREE.Vector3(localX*panel.width,localY*panel.height,localZ).applyMatrix4(panel.matrixWorld);
    snakePath.push([6+panel.index*SHOT_INTERVAL+offset,point.x,point.y,point.z]);
   }

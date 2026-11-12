@@ -16,12 +16,18 @@ export function sampleSpline(knots, time) {
 
 export const orbitOffsets = [
   // time, normalised local x/y, local z. First in front, then around the edge, then behind.
-  [0, -.7, -.2, 3],
-  [1.1, .05, -.16, 3.2],
-  [2, .72, .13, .4],
-  [3, .2, .29, -3],
-  [3.65, -.58, .25, -1.1],
+  [0, -.68, -.43, 1.2],
+  [1.1, .08, -.43, 1.3],
+  [2, .68, -.43, .4],
+  [3, .2, .42, -3],
+  [3.65, -.64, .40, -1.1],
 ];
+
+// Mirror the loop with the stage: enter from the central lane on either side.
+export function mediaOrbitKnots(index){
+ const side=index%2===0?1:-1;
+ return orbitOffsets.map(([time,x,y,z])=>[time,x*side,y,z]);
+}
 
 // A travelling rig, not a sequence of dolly stops. Longitudinal speed is constant.
 export function travellingCameraPose(time, spacing, interval, firstPanelZ) {
