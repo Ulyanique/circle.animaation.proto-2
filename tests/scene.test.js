@@ -705,3 +705,29 @@ test('media beam loops protect the central image and mirror into both stage side
   assert.ok(Math.abs(x)>.5||y<-.35,'bright core does not cross the central image on front pass');
  }
 });
+
+test('portrait stage preserves alternating placement, full-image fit and camera clearance',async()=>{
+ const {MediaPanel}=await import('../src/media-panels.js');
+ const {travellingCameraPose}=await import('../src/choreography.js');
+ const {createMediaGaze}=await import('../src/media-direction.js');
+ const {MeshPhysicalMaterial,PerspectiveCamera}=await import('three');
+ const material=new MeshPhysicalMaterial(),panels=Array.from({length:10},(_,i)=>new MediaPanel(i,material,null,null));
+ for(const panel of panels)panel.setViewportAspect(390/844);
+ const gaze=createMediaGaze(panels),camera=new PerspectiveCamera(78,390/844,.1,320);
+ for(const panel of panels){
+  const pose=travellingCameraPose(7.2+panel.index*5,18,5,-30);
+  camera.position.fromArray(pose);camera.lookAt(...gaze(7.2+panel.index*5,pose));camera.updateMatrixWorld();panel.updateMatrixWorld(true);
+  for(const x of [-panel.width/2,panel.width/2])for(const y of [-panel.height/2,panel.height/2]){
+   const p=new Vector3(x,y,0).applyMatrix4(panel.matrixWorld).project(camera);
+   assert.ok(Math.abs(p.x)<.98&&Math.abs(p.y)<.85,'portrait source fits');
+  }
+  for(let t=8+panel.index*5;t<13+panel.index*5;t+=.02){
+   const pose=travellingCameraPose(t,18,5,-30),local=panel.worldToLocal(new Vector3(...pose.slice(0,3)));
+   assert.ok(!(Math.abs(local.z)<.75&&Math.abs(local.x)<panel.width/2+.45&&Math.abs(local.y)<panel.height/2+.45),'portrait camera clearance');
+  }
+  assert.equal(panel.setViewportAspect(390/844),false,'no rebuild on unchanged viewport');
+  assert.equal(panel.setViewportAspect(1.5),true);assert.ok(Math.abs(panel.viewportScale-.68)<1e-10);
+  panel.traverse(object=>object.geometry?.dispose());panel.frame.material.dispose();panel.face.material.dispose();panel.back.material.dispose();
+ }
+ material.dispose();
+});

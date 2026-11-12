@@ -1,6 +1,7 @@
 import { smoothMotion } from './motion-easing.js';
 import * as THREE from 'three';
 import { videoTiming } from './video-timing.js';
+import { mediaStageFit } from './media-stage.js';
 import { travellingCameraPose } from './choreography.js';
 import { revealTriangles } from './media-reveal.js';
 import { sectionedTriangles, assemblyProgress, sectionOffset, seamEndpoints, choosePresentation, sectionLayout } from './sectioned-media.js';
@@ -17,7 +18,8 @@ export class MediaPanel extends THREE.Group {
     this.layoutOverride="auto";this.presentation="whole";this.sectioned=index===0;this.assembly=0;this.lastAssembly=-1;this.sectionSeams=[];
     this.sourceBlend = 1;
     this.width = 11.5; this.height = 6.47;
-    this.presentationScale=[1,.83,1.04,.9,.98,.8,1.02,.88,.95,1.02][index%10]*.68;
+    this.basePresentationScale=[1,.83,1.04,.9,.98,.8,1.02,.88,.95,1.02][index%10];
+    this.viewportScale=.68;this.presentationScale=this.basePresentationScale*this.viewportScale;
     this.frame = new THREE.Mesh(new THREE.BoxGeometry(), frameMaterial.clone());
     this.frame.material.transparent = true;
     this.frame.material.opacity = 0;
@@ -41,6 +43,17 @@ export class MediaPanel extends THREE.Group {
     this.lookAt(new THREE.Vector3(viewer[0],viewer[1],viewer[2]));
     this.setDimensions(16/9);
     this.version = 0;
+  }
+
+  setViewportAspect(aspect){
+    const fit=mediaStageFit(aspect);
+    if(Math.abs(fit.scale-this.viewportScale)<1e-6)return false;
+    this.viewportScale=fit.scale;this.presentationScale=this.basePresentationScale*fit.scale;
+    this.position.x=-8.3+(this.index%2===0?1:-1)*fit.offset;
+    const viewer=travellingCameraPose(7.2+this.index*SHOT_INTERVAL,PANEL_SPACING,SHOT_INTERVAL,FIRST_PANEL_Z);
+    this.lookAt(new THREE.Vector3(viewer[0],viewer[1],viewer[2]));
+    this.setDimensions(this.aspect||16/9);
+    return true;
   }
 
   setDimensions(aspect) {

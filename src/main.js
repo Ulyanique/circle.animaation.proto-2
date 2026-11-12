@@ -148,6 +148,7 @@ function rebuildSnakePath() {
 }
 for (let i=0;i<shots.length;i++) {
  const panel = new MediaPanel(i, gold, loader, () => {rebuildSnakePath();updateMediaUI();},()=>invalidateScene());
+ panel.setViewportAspect(innerWidth/innerHeight);
  mediaStage.add(panel);panels.push(panel);
 }
 rebuildSnakePath();
@@ -436,7 +437,10 @@ $('#compare').onclick=()=>{resumeAfterReference=playing;setPlaying(false);$('#re
 function closeReference(){$('#reference video').pause();$('#reference').hidden=true;$('#compare').setAttribute('aria-pressed','false');setPlaying(resumeAfterReference);}
 $('#close-reference').onclick=closeReference;
 window.addEventListener('keydown',e=>{if(e.code==='Escape'){if(!$('#reference').hidden)closeReference();else if(!$('#chapters-menu').hidden)toggleChapters(false);else if(!$('#media-menu').hidden)toggleMedia(false);}if(e.target.closest('input,button,video,select,textarea,[contenteditable=true]'))return;if(e.code==='Space'){e.preventDefault();setPlaying(!playing);}if(e.code==='ArrowRight')time=Math.min(DURATION,time+5);if(e.code==='ArrowLeft')time=Math.max(0,time-5);});
-window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);});
+window.addEventListener('resize',()=>{
+ let changed=false;for(const panel of panels)changed=panel.setViewportAspect(innerWidth/innerHeight)||changed;
+ if(changed)rebuildSnakePath();
+ camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);});
 renderer.setAnimationLoop(now=>{const dt=Math.min((now-last)/1000,.1);last=now;if(assetsReady&&playing&&!document.hidden){time+=dt*settings.speed;if(time>DURATION){if(settings.loop)time=0;else{time=DURATION;setPlaying(false);}}}if(renderGate.shouldRender(now,assetsReady&&(playing||panels.some(panel=>panel.sourceBlend<1)),document.hidden))render(time,dt);});
 
 
