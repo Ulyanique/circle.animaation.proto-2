@@ -1,3 +1,4 @@
+import { capturePng, downloadFrame, frameFilename } from './frame-export.js';
 import { mountCinemaView } from './cinema-view.js';
 import { createPlaybackTempo } from './playback-tempo.js';
 import { smoothMotion as smooth, dampMotion } from './motion-easing.js';
@@ -565,3 +566,18 @@ if(import.meta.env.DEV&&new URLSearchParams(location.search).has('motionCapture'
   });
  };
 }
+
+
+$('#frame-export').onclick=async()=>{
+ const button=$('#frame-export'),status=$('#settings-panel .settings-status');
+ if(!assetsReady){status.textContent='Дождитесь загрузки сцены.';return;}
+ button.disabled=true;status.textContent='Сохраняем текущий кадр…';
+ const stamp=time;
+ try{
+  render(stamp,0);
+  const blob=await capturePng(renderer.domElement);
+  downloadFrame(blob,frameFilename(stamp));
+  status.textContent=`Кадр сохранён: ${renderer.domElement.width} × ${renderer.domElement.height} px. Без интерфейса.`;
+ }catch(error){status.textContent=error.name==='SecurityError'?'Экспорт недоступен для медиа без разрешения CORS. Загрузите файл с устройства.':error.message||'Не удалось сохранить кадр.';}
+ finally{button.disabled=false;invalidateScene();}
+};

@@ -396,3 +396,9 @@ Added a shared critically damped tempo for film time and uploaded-video playback
 Added a clean-view transport button and H shortcut. Header/footer fade away and become inert without changing playback, camera or render settings. Escape/H or the floating exit button restores chrome/focus; pointer activity reveals the exit affordance, which fades after 1.8 seconds unless hovered/keyboard-focused. Space still toggles playback in clean mode. Keyboard entry is guarded while dialogs/reference/settings or editable controls are active. Reduced-motion preferences suppress UI fades.
 
 52 unit tests/build pass. Portable Chromium checked button/keyboard entry, Escape/button exit, playback preservation, inert chrome restoration and dialog guard; ten slots/zero errors. Clean-view screenshot inspected. Browser test flag: `BROWSER_CINEMA=1`. Existing bundle-size warning remains.
+
+### Native-resolution frame export
+
+Settings now includes “Сохранить кадр PNG”. It renders the current timestamp immediately before reading the postprocessed WebGL canvas, exporting only the scene (no DOM chrome) at the current render resolution. Export does not alter playback or quality and does not require preserveDrawingBuffer. PNG filenames include minutes/seconds/milliseconds. Null capture/CORS failures are reported, the button recovers after errors, and temporary object URLs are revoked after download starts.
+
+53 tests/build pass. Portable Chromium downloaded an actual PNG, verified its signature/native canvas dimensions and unchanged playback state; ten slots/zero errors. Exported image inspected: scene is present, with no settings/header/footer. Browser test flag: `BROWSER_FRAME=1`. Existing bundle warning remains.

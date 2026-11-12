@@ -56,6 +56,20 @@ try {
     await page.screenshot({path:join(artifacts,filename),timeout:120000});
     frames.push(filename);console.log('Captured',filename);
   }
+  if(process.env.BROWSER_FRAME==='1'){
+    const playLabel=await page.locator('#play').getAttribute('aria-label');
+    await page.click('#settings-toggle');
+    const event=page.waitForEvent('download');await page.click('#frame-export');
+    const download=await event,path=join(artifacts,'exported-frame.png');await download.saveAs(path);
+    const png=await readFile(path);
+    if(png.subarray(0,8).toString('hex')!=='89504e470d0a1a0a')errors.push('Export is not PNG');
+    const size=await page.locator('#scene canvas').evaluate(canvas=>[canvas.width,canvas.height]);
+    if(png.readUInt32BE(16)!==size[0]||png.readUInt32BE(20)!==size[1])errors.push('Export dimensions mismatch');
+    if(await page.locator('#play').getAttribute('aria-label')!==playLabel)errors.push('Export changed playback');
+    await page.waitForFunction(()=>!document.querySelector('#frame-export').disabled);
+    await page.click('#settings-close');
+    console.log('Frame export: PNG download, native render dimensions and playback preservation checked');
+  }
   if(process.env.BROWSER_CINEMA==='1'){
     const playLabel=await page.locator('#play').getAttribute('aria-label');
     await page.click('#cinema-toggle');

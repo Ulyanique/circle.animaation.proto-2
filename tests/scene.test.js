@@ -745,3 +745,14 @@ test('tempo changes ramp continuously with frame-independent film timing',()=>{
  }
  assert.equal(tempo.step(.1,1,false),0,'pause cannot advance timeline');
 });
+
+import { capturePng, frameFilename } from '../src/frame-export.js';
+test('frame export reports PNG failure and names the exact captured timestamp',async()=>{
+ assert.equal(frameFilename(7.2),'amber-00-07-200.png');
+ assert.equal(frameFilename(64.125),'amber-01-04-125.png');
+ assert.equal(frameFilename(NaN),'amber-00-00-000.png');
+ const blob=new Blob(['test'],{type:'image/png'});
+ assert.equal(await capturePng({toBlob(callback,type){assert.equal(type,'image/png');callback(blob);}}),blob);
+ await assert.rejects(capturePng({toBlob(callback){callback(null);}}),/сохранить кадр/);
+ await assert.rejects(capturePng({toBlob(){throw new Error('SecurityError');}}),/SecurityError/);
+});
