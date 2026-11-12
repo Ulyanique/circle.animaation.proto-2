@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import mediaTool from './src/dev/mediaServer.js';      // dev server only: the placement tool (key E on the page)
+import titleTool from './src/dev/brandServer.js';      // dev server only: the title tool (key T)
 import { titleSettings, titleChars, keepGlyphs, pageHtml } from './src/fx/titleSettings.js';
 
 // The shot data files (src/shots/data/sNN.json) also carry what only the tools need: the raw tracked camera, the light
@@ -49,7 +50,7 @@ const brand = () => {
 
 export default defineConfig({
   base: './',
-  plugins: [slimShotData(), brand(), mediaTool()],
+  plugins: [slimShotData(), brand(), mediaTool(), titleTool()],
   server: {
     host: '0.0.0.0',
     port: 5173,

@@ -48,12 +48,14 @@ export function keepGlyphs(font, chars) {
 const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
- * index.html with the page's own name in it: the browser tab (`name`, or the caption followed by « — three.js»),
- * the description and the loading screen (the caption, or `name` if there is no caption).
+ * The page's own names: `tab` — the browser tab (`name`, or the caption followed by « — three.js»); `label` — the
+ * loading screen and the description (the caption, or `name` if there is no caption).
  */
+export const pageNames = (s) => ({ label: s.caption || s.name, tab: s.name || (s.caption ? `${s.caption} — three.js` : 'three.js') });
+
+/** index.html with the page's own names in it: the browser tab, the description and the loading screen. */
 export function pageHtml(html, s) {
-  const label = esc(s.caption || s.name);
-  const tab = esc(s.name || (s.caption ? `${s.caption} — three.js` : 'three.js'));
+  const names = pageNames(s), label = esc(names.label), tab = esc(names.tab);
   return html
     .replace(/<title>[^<]*<\/title>/, () => `<title>${tab}</title>`)
     .replace(/(<meta name="description" content=")[^"]*"/, (m, a) => `${a}${label ? `${label}: заставка` : 'Заставка'}, воссозданная в реальном времени на three.js."`)

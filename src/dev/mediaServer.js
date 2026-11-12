@@ -9,27 +9,29 @@
 // interfaces and answers to any host name (vite.config.js), so for another machine, through a proxy, or under a host
 // name that merely points here, the tool is read-only: it still shows the line to copy.
 // `MEDIA_TOOL=remote npm run dev` lets those write too.
+// The title tool's side (brandServer.js) answers by the same rules and uses the pieces exported here.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_UPLOAD, MEDIA_FILE, cleanSettings, dropLine, entryText, mediaLine, putLine, safeName } from './mediaLine.js';
 
-const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const SETTINGS = path.join(ROOT, 'src', 'media.js'), DIR = path.join(ROOT, 'public', 'media');
+export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+export const DIR = path.join(ROOT, 'public', 'media');
+const SETTINGS = path.join(ROOT, 'src', 'media.js');
 const WINDOW = /^w(0[1-9]|1[01])$/;
 
-/** The photos and videos in public/media/: [{ name, size }], by name. */
-function listFiles() {
+/** The files in public/media/ that a window can show (or those `allowed` names): [{ name, size }], by name. */
+export function listFiles(allowed = MEDIA_FILE) {
   let found = [];
   try { found = fs.readdirSync(DIR, { withFileTypes: true }); } catch { /* no folder yet */ }
-  return found.filter((d) => d.isFile() && !d.name.startsWith('.') && MEDIA_FILE.test(d.name))
+  return found.filter((d) => d.isFile() && !d.name.startsWith('.') && allowed.test(d.name))
     .map((d) => ({ name: d.name, size: fs.statSync(path.join(DIR, d.name)).size }))
     .sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
 }
 
 /** Did the page itself send this (not a page of another site)? */
-function sameOrigin(req) {
+export function sameOrigin(req) {
   const site = req.headers['sec-fetch-site'], origin = req.headers.origin;
   if (site) return site === 'same-origin';
   if (!origin) return true;      // not a browser
@@ -37,11 +39,34 @@ function sameOrigin(req) {
 }
 
 /** Is the page open on this computer, at localhost, with no proxy in between? */
-function local(req) {
+export function local(req) {
   const a = req.socket.remoteAddress || '', host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
   // the host name too: another site's name can be made to point at 127.0.0.1, and its page would then be "the same origin"
   return (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.')) && ['localhost', '127.0.0.1', '[::1]'].includes(host)
     && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
+}
+
+/** May the page that sent this change files? */
+export const mayWrite = (req) => process.env.MEDIA_TOOL === 'remote' || local(req);
+
+/** How the tools' addresses answer: JSON that is never kept. -> reply(status, data) */
+export const answerOf = (res) => (code, data) => {
+  res.statusCode = code;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(data));
+};
+
+/** The request's body as JSON -> done(data); a body that is too long or is not JSON is answered here. */
+export function readJson(req, reply, done) {
+  let body = '';
+  req.setEncoding('utf8');
+  req.on('data', (chunk) => { body += chunk; if (body.length > 50000) req.destroy(); });
+  req.on('end', () => {
+    let data;
+    try { data = JSON.parse(body); } catch { return reply(400, { error: 'not JSON' }); }
+    Promise.resolve().then(() => done(data)).catch((e) => reply(400, { error: String(e?.message || e) }));
+  });
 }
 
 /** Writes the entries [{ id, settings | null }] into src/media.js (null takes the window's line out). */
@@ -67,10 +92,8 @@ function saveEntries(entries) {
   return { ok: true, changed: next !== text, lines };
 }
 
-/** Streams the request body into public/media/<name>. */
-function takeFile(req, res, rawName, reply) {
-  const name = safeName(rawName);
-  if (!name) return reply(400, { error: 'not a photo or video a window can show' });
+/** Streams the request body into public/media/<name> (`name`: a file name that safeName has passed). */
+export function takeFile(req, res, name, reply) {
   if (Number(req.headers['content-length']) > MAX_UPLOAD) { res.setHeader('Connection', 'close'); return reply(413, { error: 'file too big' }); }
   fs.mkdirSync(DIR, { recursive: true });
   const tmp = path.join(DIR, `.upload-${process.pid}-${Date.now()}`), out = fs.createWriteStream(tmp);
@@ -78,9 +101,11 @@ function takeFile(req, res, rawName, reply) {
   const fail = (code, error) => {
     if (done) return;
     done = true;
-    req.unpipe(out); out.destroy(); req.resume();
-    fs.rm(tmp, { force: true }, () => {});
-    if (!res.writableEnded) reply(code, { error });
+    req.unpipe(out); req.resume();
+    // The temporary file goes first and the answer after it: whoever asked finds the folder as it was. (Removed once
+    // the stream has closed: a file that is still being opened would appear again after an earlier removal.)
+    const drop = () => fs.rm(tmp, { force: true }, () => { if (!res.writableEnded) reply(code, { error }); });
+    if (out.closed) drop(); else { out.once('close', drop); out.destroy(); }
   };
   req.on('data', (chunk) => { size += chunk.length; if (size > MAX_UPLOAD) fail(413, 'file too big'); });
   req.on('close', () => { if (!req.complete) fail(400, 'upload interrupted'); });
@@ -103,31 +128,24 @@ export default function mediaTool() {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use('/__media', (req, res) => {
-        const reply = (code, data) => {
-          res.statusCode = code;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.setHeader('Cache-Control', 'no-store');
-          res.end(JSON.stringify(data));
-        };
+        const reply = answerOf(res);
         try {
           const url = new URL(req.url || '/', 'http://dev');      // what follows /__media
-          const write = process.env.MEDIA_TOOL === 'remote' || local(req);
+          const write = mayWrite(req);
           if (req.method === 'GET' && url.pathname === '/') return reply(200, { files: listFiles(), write, max: MAX_UPLOAD });
           if (req.method !== 'POST') return reply(405, { error: 'GET or POST' });
           if (!sameOrigin(req)) return reply(403, { error: 'cross-origin' });
           if (!write) return reply(403, { error: 'read-only' });
-          if (url.pathname === '/file') return takeFile(req, res, url.searchParams.get('name'), reply);
+          if (url.pathname === '/file') {
+            const name = safeName(url.searchParams.get('name'));
+            return name ? takeFile(req, res, name, reply) : reply(400, { error: 'not a photo or video a window can show' });
+          }
           if (url.pathname !== '/') return reply(404, { error: 'not found' });
-          let body = '';
-          req.setEncoding('utf8');
-          req.on('data', (chunk) => { body += chunk; if (body.length > 50000) req.destroy(); });
-          req.on('end', () => {
-            try {
-              const out = saveEntries(JSON.parse(body).entries);
-              // the page may ask for the file again before the watcher has noticed the change
-              if (out.changed) server.moduleGraph?.onFileChange?.(SETTINGS.split(path.sep).join('/'));
-              reply(200, out);
-            } catch (e) { reply(400, { error: String(e?.message || e) }); }
+          readJson(req, reply, (data) => {
+            const out = saveEntries(data.entries);
+            // the page may ask for the file again before the watcher has noticed the change
+            if (out.changed) server.moduleGraph?.onFileChange?.(SETTINGS.split(path.sep).join('/'));
+            reply(200, out);
           });
         } catch (e) { reply(400, { error: String(e?.message || e) }); }
       });

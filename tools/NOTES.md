@@ -289,18 +289,74 @@ Any photo or video in any window. User-facing description: README, «Свои ф
     instead, with a destination rectangle that puts the wanted part on the canvas; that works for both.
   - Not an option: `texture.premultiplyAlpha` with an sRGB texture — the encoded values get multiplied, edges darken.
 - **Checks.** `node tools/captiontest.mjs` (plain node, from the repo: settings, page name, `fitLine`, the font file,
-  the glyphs a build keeps). `titleshot.mjs OUTDIR` (headless, needs the dev server; 19 variants + `hot` + `lost`, about 3 min;
-  pictures for the eye in OUTDIR; `ONLY=long,hot` for a few; `QUERY=scope` adds to the page's address; one custom
-  variant: `titleshot.mjs OUTDIR '{"caption":"…"}' 1010,1100`,
-  test pictures `media/_test_mark_colour.svg`, `_black.svg`, `_white.svg`, `_padded.png` exist while it runs).
+  the glyphs a build keeps). `titleshot.mjs OUTDIR` (headless, needs the dev server; 19 variants + `hot` + `lost`,
+  about 3 min; pictures for the eye in OUTDIR; `ONLY=long,hot` for a few; `QUERY=scope` adds to the page's address;
+  one custom variant: `titleshot.mjs OUTDIR '{"caption":"…"}' 1010,1100`; test pictures
+  `media/_test_mark_colour.svg`, `_black.svg`, `_white.svg`, `_padded.png` exist while it runs).
   `buildtest.mjs [OUTDIR]` (two builds into /tmp, `vite preview` on 4174, the title of the built site). The last two
   rewrite `src/brand.js` and put the user's file back, also after a failure.
-  - `hot` first failed with "Execution context was destroyed": the open page loaded twice after one save (the dev
-    server logged two reloads within a second). Now the tools replace the file by rename instead of writing it in
-    place, and wait for the new text at `/src/brand.js` itself (not at a URL with a unique query); the page loads
-    once, and `hot` checks that. Which of the two changes cured it was not isolated.
+  - `hot`: an open, paused page follows a save of `src/brand.js` — new tab name, new picture, same frame, **no page
+    load** (the title is rebuilt in place, see the title tool below). The tools replace the file by rename instead of
+    writing it in place (written in place it is empty for a moment and the dev server reports two changes) and wait
+    for the new text at `/src/brand.js` itself, not at a URL with a unique query.
   - A WebGL canvas can be read (`toDataURL`, `drawImage`) only in the task that drew it; later it is blank.
   - Frame 1213 is black by design (the film ends on a black frame): for "the title at its largest" look at 1212.
+
+- **Title tool** (`src/dev/`, key T or `?title`; dev server only — started in `main.js` next to the placement tool):
+  - `titler.js` — the panel. It holds the settings in the form of the saved lines (`tidyBrand`), so what is on the
+    screen is what gets saved. An edit → `showTitle(settings, anew)` (`fx/title.js`) → `s17.js` builds the title anew
+    under the running film (only a new emblem picture is loaded) and fires `title-shown` with `{ settings, info }`.
+    Nothing reloads the page: not an edit, not a save, not a hand edit of `src/brand.js` — `title.js` accepts the hot
+    update of `../brand.js` and calls `brandFile.changed`, which the tool takes over: the file wins, unless the news
+    is the echo of the tool's own save. That echo can reach the page **before** the answer to the save does, so the
+    tool notes what it is sending before the request. A replaced title is disposed only after its successor was
+    drawn once — the two share their compiled shaders, and freeing the old one first makes the next frame wait for a
+    recompile.
+  - Speed. Nearly all of a rebuild is the letters' `ExtrudeGeometry`: no text 0.2 ms, the compass 3 ms, a caption of
+    16 letters 41–51 ms, of 46 letters 89 ms — at every key that made the field lag behind the typing. `glyphStore()`
+    in `title.js` keeps outlines by character, solids by character and proportions, and the whole lines of the latest
+    title; with it 14 letters are typed in 0.55 s instead of 1.6 s. A line made with the store equals a plain build
+    float for float, and only rebuilds use it (the first build of a page does not), so the film is what it was.
+    If a build still takes over 40 ms the tool waits for a pause of 140 ms in the typing.
+  - Layout. In a window of 760 px or more the panel stands beside the film (`setReserve(px)` in `main.js` keeps that
+    much of the window's right side free: `#stage` gets `right: 358px` and `layout()` fits the film into the rest), in
+    a narrower one over the film's corner like the placement tool's. A panel over the title hid the last letters of
+    the very caption being typed. `panel.js` has what the two tools share: the look, the HUD button, "one tool open
+    at a time" (`toolOpen` / `openTool`: a dropped file goes to the open tool) and `releaseKeys` (a button clicked
+    with the mouse does not keep the keyboard, so the next Space plays the film instead of pressing it again).
+  - `brandLine.js` — shared by page and server: `tidyBrand` (settings as they will be written), `brandEntries` /
+    `brandBlock` (the lines; a value that is the default gets no line, `caption` always does), `cleanBrand`
+    (validation), `putBrand(text, settings)` — rewrites the lines of `export default { … }` in the text of
+    `src/brand.js`: one setting per line; comments, commented examples, the user's own lines, the indent and Windows
+    line ends stay; a new line goes before the commented example of its key. A file it cannot read that way (two
+    settings on a line, a value over several lines, the same key twice, no `export default {` line) is refused.
+  - `brandServer.js` — `GET /__brand` → `{ files, write, max }`; `POST /__brand` `{ settings }` → `putBrand`, then the
+    new text is imported back and must say exactly what was asked, then one write by temporary file + rename;
+    `POST /__brand/file?name=` → `public/media/` (svg png webp avif gif jpg jpeg; the windows' side still takes no
+    SVG). The emblem can only be a file of `public/media/`, or the address the file names already. Same write rules
+    as `/__media` (same origin + this machine, or `MEDIA_TOOL=remote`). `/media/*.svg` is served with
+    `Content-Security-Policy: script-src 'none'`: an uploaded SVG opened by its address would otherwise run its
+    scripts with the page's rights — which here include writing files. (As an `<img>` — the way the title loads
+    it — an SVG runs nothing anyway.)
+  - Unsaved settings live in `sessionStorage` (`titler`: `open`, `now`, `base`) through a page load, as long as the
+    file is what it was (`base`); the HUD button carries a dot while the film shows what the file does not say.
+  - Tests. `node tools/linetest.mjs` (plain node: the lines, validation, `putBrand` on many shapes of file).
+    `titlertest.mjs [OUTDIR]` (headless, needs the dev server on this machine; ≈ 3 min, `DPR=1` for full-size
+    frames ≈ 9 min — without a GPU reading a frame back costs seconds): the server's refusals, files the tool leaves
+    alone, the page driven by keyboard and mouse, and the frame built under the typing compared with what a fresh
+    page draws from the saved file — identical pixel for pixel at f990, 1010, 1040, 1100, 1212; logo by button,
+    dropped, replaced under its name; the warnings; keys and focus; the panel beside / over the film; GPU objects
+    after a run of rebuilds; a page that may not write (the test answers `/__brand` itself for that page). The
+    server's own "read-only" refusals are checked only against a dev server started **without** `MEDIA_TOOL=remote`
+    (`URL=http://localhost:PORT` points the test at another one). It restores `src/brand.js` and `src/media.js` and
+    removes its `_test_*` pictures. `titlershot.mjs OUT.png` makes `docs/titler.jpg` (a wind rose as
+    `public/media/logo.svg` while it runs; nothing is saved).
+  - Headless traps met on the way: `page.click(sel, { clickCount: 3 })` on a text field only places the caret (the
+    typed text landed inside the old one) — focus and `select()` in an `evaluate` instead; `await import('/src/…js')`
+    in an `evaluate` loads a **second** copy of a module the page already has under `…js?t=…` after an edit (and then
+    hangs on its own boot) — reach the page's instance through `window.__titler`, `__title`, `__player`; a temporary
+    upload file removed asynchronously after the answer made "nothing is left behind" fail one run in three — the
+    server now removes it first and answers after.
 
 ## Dead ends (do not retry)
 

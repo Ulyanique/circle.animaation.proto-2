@@ -122,7 +122,7 @@ try {
     await page.close();
   }
   if (!custom && (!only || only.includes('hot'))) {
-    // an open, paused page follows the file: it loads itself again and stays on its frame
+    // an open, paused page follows the file: the title is built anew under it, the page does not load itself again
     await setBrand({ caption: 'Первая подпись' });
     const page = await browser.newPage();
     const said = [];
@@ -132,21 +132,34 @@ try {
     await page.keyboard.down('Shift'); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await page.keyboard.up('Shift');      // on to frame 1102
     await new Promise((r) => setTimeout(r, 600));          // the address follows the frame a moment later
     const state = () => page.evaluate(() => ({ tab: document.title, frame: Math.round(window.__player.time * 24 + 1), playing: window.__player.playing, address: location.search }));
-    const before = await state();
+    // the band of the frame where the caption stands, as the page draws it now: a grey picture, 64 × 4
+    const band = () => page.evaluate(() => {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 4;
+      const g = c.getContext('2d');
+      window.__player.renderAt(Math.round(window.__player.time * 24 + 1));      // a WebGL canvas can be read only right after it was drawn
+      const view = document.getElementById('view');
+      g.drawImage(view, view.width * 0.15, view.height * 0.7, view.width * 0.7, view.height * 0.09, 0, 0, 64, 4);
+      const d = g.getImageData(0, 0, 64, 4).data;
+      return Array.from({ length: 256 }, (_, i) => Math.max(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]));
+    });
+    const before = await state(), bandBefore = await band();
     let loads = 0;
     page.on('load', () => loads++);
-    const loaded = page.waitForNavigation({ waitUntil: 'load', timeout: 60000 });
-    await setBrand({ caption: 'Вторая подпись' }, false);
-    await loaded;
+    await setBrand({ caption: 'Вторая', size: 1.5 }, false);
+    for (let i = 0; i < 150; i++) {
+      if (await page.evaluate(() => document.title === 'Вторая — three.js')) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    await new Promise((r) => setTimeout(r, 1500));         // (were the page to load itself after all, it would be now)
     await page.waitForFunction('window.__ready === true', { timeout: 120000 });
-    await new Promise((r) => setTimeout(r, 1500));         // (were the page to load itself once more, it would be now)
-    await page.waitForFunction('window.__ready === true', { timeout: 120000 });
-    const after = { ...await state(), loads };
-    report.hot = { before, after, said };
-    console.log('hot'.padEnd(13), JSON.stringify(before), '->', JSON.stringify(after));
+    const after = { ...await state(), loads }, bandAfter = await band();
+    const moved = Math.max(...bandBefore.map((v, i) => Math.abs(v - bandAfter[i])));
+    report.hot = { before, after, moved, said };
+    console.log('hot'.padEnd(13), JSON.stringify(before), '->', JSON.stringify(after), `; the caption's band changed by up to ${moved}`);
     check('hot: the page was on frame 1102, paused', before.frame === 1102 && !before.playing && before.tab === 'Первая подпись — three.js', JSON.stringify(before));
-    check('hot: after the file changed it shows the new caption on the same frame, paused', after.frame === 1102 && !after.playing && after.tab === 'Вторая подпись — three.js', JSON.stringify(after));
-    check('hot: … having loaded itself once', after.loads === 1, `${after.loads} times`);
+    check('hot: after the file changed it shows the new caption on the same frame, paused', after.frame === 1102 && !after.playing && after.tab === 'Вторая — three.js', JSON.stringify(after));
+    check('hot: … in the picture too', moved > 40, `the caption's band changed by up to ${moved}`);
+    check('hot: … without loading itself again', after.loads === 0, `${after.loads} times`);
     check('hot: nothing said', said.length === 0, said.join(' | '));
     await page.close();
   }

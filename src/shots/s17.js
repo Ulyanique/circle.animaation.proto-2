@@ -3,8 +3,9 @@
 // then the caption rises below it (f1022–1050). The title holds until the end while the camera creeps towards it.
 // What the title says and shows is set in src/brand.js (fx/title.js).
 import * as THREE from 'three';
-import { track } from '../core/util.js';
-import { makeTitle, ringPointPx, titleScale, TITLE_CENTRE } from '../fx/title.js';
+import { track, touch } from '../core/util.js';
+import { loadEmblem } from '../core/assets.js';
+import { glyphStore, makeTitle, onTitle, titleScale, TITLE, TITLE_CENTRE } from '../fx/title.js';
 import { makeBurst } from '../fx/burst.js';
 
 const centre = track([[963, [665, 375]], [966, [645, 352]], [970, [640, 356]], [1003, [641, 362]]]);
@@ -32,14 +33,41 @@ export default {
   make(assets) {
     const group = new THREE.Group();
     group.visible = false;
-    const title = makeTitle(assets.emblem);
-    const { ring: hasRing, caption: line } = title.info;
+    let title = makeTitle(TITLE, assets.emblem);
     const burst = makeBurst();
     group.add(title.group, burst);
     const size = new THREE.Vector2();
+    const old = [];      // dev server: titles that were replaced
+    let drawn = true;    // … and whether the one that replaced them has been drawn
+    if (import.meta.env.DEV) {
+      // Dev server: src/brand.js was saved, or the title tool (dev/titler.js) tries other settings — the title is built
+      // anew under the running film. Only a new picture for the emblem has to be loaded for that.
+      let emblem = { src: TITLE.image, picture: assets.emblem }, turn = 0;
+      const store = glyphStore();
+      onTitle(async (s, anew = false) => {
+        const mine = ++turn;
+        if (s.image && (s.image !== emblem.src || anew)) {
+          const picture = await loadEmblem(s.image, anew);
+          if (mine !== turn) { picture?.texture.dispose(); return; }      // newer settings came meanwhile
+          emblem.picture?.texture.dispose();
+          emblem = { src: s.image, picture };
+        }
+        const next = makeTitle(s, s.image ? emblem.picture : null, store);
+        group.remove(title.group);
+        old.push(title);
+        title = next; drawn = false;
+        group.add(title.group);
+        touch();
+        window.dispatchEvent(new CustomEvent('title-shown', { detail: { settings: s, info: title.info } }));
+      });
+      window.__title = { get info() { return title.info; } };      // for the title tool and the checks
+    }
     return {
       id: 's17', range: [963, 1213], group,
       update(f, st, time) {
+        // A replaced title is freed once its successor has been drawn: freed before, it would take the compiled
+        // shaders with it — the two use the same ones — and the next frame would wait for them to be compiled again.
+        if (old.length) { if (drawn) { for (const t of old.splice(0)) t.dispose(); } else drawn = true; }
         const cam = st.camera;
         cam.position.set(0, 0, 0); cam.quaternion.identity();
         if (cam.fov !== 45) { cam.fov = 45; cam.updateProjectionMatrix(); }
@@ -56,10 +84,10 @@ export default {
         burst.material.uniforms.uC.value.set(c[0], c[1]);
         const fl = st.flares[0];
         fl.x = c[0]; fl.y = c[1]; fl.i = flareI(f); fl.s = flareS(f); fl.ring = 0; fl.rays = rays(f); fl.rot = time * 0.3;
-        const gl = st.flares[1];
+        const gl = st.flares[1], { ring: hasRing, caption: line } = title.info;
         if (f < 1042) {
           // the tip of light on the circle
-          const q = ringPointPx(p, f);
+          const q = title.ringPoint(p, f);
           gl.x = q[0]; gl.y = q[1]; gl.i = f >= 1000 && hasRing ? tipI(f) : 0; gl.s = 0.5; gl.ring = 0; gl.rays = 0.7; gl.rot = time * 0.2;
         } else {
           // the sparkle keeps to the caption as it is set: as far from the middle as the line is wide, at its letters' tops

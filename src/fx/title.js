@@ -11,29 +11,23 @@ import { Font } from 'three/addons/loaders/FontLoader.js';
 // holds every glyph of the font, Latin and Cyrillic (581); the build ships only the ones the text uses (vite.config.js).
 import serifData from './fonts/title-serif-600.json';
 import brand from '../brand.js';
-import { titleSettings } from './titleSettings.js';
+import { titleSettings, pageNames } from './titleSettings.js';
 import { fitLine } from './caption.js';
 import { VIDEO_W, VIDEO_H, rng } from '../core/util.js';
 
 export const TITLE_CENTRE = [645, 364];
-export const TITLE = titleSettings(brand);
-const ALONE = TITLE.emblem === 'none' && !TITLE.ring;      // nothing above the text: it takes the middle of the frame
-// The two lines as they will be drawn. A line the font has not one character of is no line, and a second line
-// without a first one takes its place.
-const LACKING = [...new Set([...(TITLE.caption + TITLE.tagline)])].filter((ch) => ch !== ' ' && !serifData.glyphs[ch]);
-const [CAPTION = '', TAGLINE = ''] = [TITLE.caption, TITLE.tagline].filter((text) => [...text].some((ch) => serifData.glyphs[ch]));
+/** The settings in force. On the dev server they change under the running film — see the end of this file. */
+export let TITLE = titleSettings(brand);
 const FOCAL = (VIDEO_H / 2) / Math.tan(Math.PI / 8);
 const DEPTH = 10;
 
-// ---- emblem geometry (its own units; EMBLEM places and scales it in the title block) -----------------
+// ---- emblem geometry (its own units; the layout's `emblem` places and scales it in the title block) ----
 const RING = { x: 0, y: 66, r: 112 };                  // the circle the compass draws
 const HINGE_Y = RING.y + 74;                           // the hinge sits inside the circle, the handle pokes out of it
 const LEG = 180;                                       // hinge -> tip
 const TIP = [56, RING.y - 97];                         // pencil tip (the needle is its mirror image); both touch the circle
 const LEG_ANGLE = Math.atan2(TIP[0], HINGE_Y - TIP[1]);         // half opening of the legs when the tips are on the circle
 const RING_START = Math.atan2(TIP[1] - RING.y, TIP[0]);         // the circle starts at the pencil tip
-// scale and position of the circle's centre in the block (with no text below it, the emblem takes the middle)
-const EMBLEM = { k: 1.34, x: 0, y: CAPTION ? 40 : 0 };
 
 // ---- text (block px) ----------------------------------------------------------------------------------
 const CAP_H = 44;                                      // height of the caption's capitals at size 1
@@ -44,39 +38,87 @@ const SPACE = 0.42;                                    // a space between words,
 const TAG = { cap: 0.42, gap: 0.34, track: [0.08, 0.55] };      // tagline: its capitals and the gap above it (of the caption's capitals), letter-spacing
 const DESCENT = 0.24;                                  // how far «р», «у», «g» reach below the line, in cap heights
 
-/** Where the two lines of text stand: heights of their capitals and their baselines (block px, y up). */
-function textRows() {
-  const cap = Math.min(CAP_H * TITLE.size, ALONE ? 130 : 70);      // an emblem or the circle above leaves room for 70 px
-  const tag = TAG.cap * cap, below = TAGLINE ? (DESCENT + TAG.gap) * cap + tag : 0;
+/**
+ * How the title is laid out with the settings `s`:
+ *   caption, tagline   the two lines as they will be drawn: a line the font has not one character of is no line, and
+ *                      a second line without a first one takes its place;   lacking: characters the font has no glyph for
+ *   emblem             scale and position of the circle's centre in the block (with no text below it, it takes the middle)
+ *   rows               heights of the capitals of the two lines and their baselines (block px, y up)
+ */
+function layoutOf(s) {
+  const alone = s.emblem === 'none' && !s.ring;        // nothing above the text: it takes the middle of the frame
+  const lacking = [...new Set([...(s.caption + s.tagline)])].filter((ch) => ch !== ' ' && !serifData.glyphs[ch]);
+  const [caption = '', tagline = ''] = [s.caption, s.tagline].filter((text) => [...text].some((ch) => serifData.glyphs[ch]));
+  const emblem = { k: 1.34, x: 0, y: caption ? 40 : 0 };
+  const cap = Math.min(CAP_H * s.size, alone ? 130 : 70);          // an emblem or the circle above leaves room for 70 px
+  const tag = TAG.cap * cap, below = tagline ? (DESCENT + TAG.gap) * cap + tag : 0;
   // top of the caption's capitals: the pair is centred if it is alone; under the emblem a tagline lifts the caption a little
-  const top = ALONE ? (cap + below) / 2 : -174 + cap / 2 + (TAGLINE ? Math.min(0.3 * cap, 13) : 0);
-  return { cap, tag, captionY: top - cap, taglineY: top - cap - below };
-}
-
-/** Video pixel of the point of the circle that is drawn when `p` (0..1) of it is done, at frame f. */
-export function ringPointPx(p, f) {
-  const a = RING_START + p * Math.PI * 2, S = titleScale(f);
-  return [TITLE_CENTRE[0] + S * (EMBLEM.x + EMBLEM.k * RING.r * Math.cos(a)), TITLE_CENTRE[1] - S * (EMBLEM.y + EMBLEM.k * RING.r * Math.sin(a))];
+  const top = alone ? (cap + below) / 2 : -174 + cap / 2 + (tagline ? Math.min(0.3 * cap, 13) : 0);
+  return { lacking, caption, tagline, emblem, rows: { cap, tag, captionY: top - cap, taglineY: top - cap - below } };
 }
 
 /** Scale of the title block at frame f (1 at f ≈ 1100), i.e. screen px per block unit. */
 export const titleScale = (f) => (637 + 0.56 * (f - 1009)) / 687;
 
 /**
+ * Dev server: the title is built anew at every letter that is typed and every step of a slider (dev/titler.js), and
+ * nearly all of that time goes into the letters. A store to hand to makeTitle, so that one title can use what the one
+ * before it made:
+ *   · the lines of text of the latest title, whole — a line that did not change is not made again (their geometry
+ *     is the store's: a title does not free it);
+ *   · the outlines by character, and the letters' solids by character and proportions (those of the `most` latest
+ *     proportions: a size slider goes through dozens).
+ * What a line is made of with the store is, number for number, what it is made of without.
+ */
+export function glyphStore(most = 3) {
+  const groups = new Map();      // proportions -> Map(character -> solid), the latest one last
+  const lines = new Map(), used = new Set();
+  return {
+    glyphs: new Map(),
+    solid(group, ch, make) {
+      let solids = groups.get(group);
+      if (solids) groups.delete(group); else solids = new Map();
+      groups.set(group, solids);
+      while (groups.size > most) groups.delete(groups.keys().next().value);
+      let made = solids.get(ch);
+      if (!made) solids.set(ch, made = make());
+      const copy = new THREE.BufferGeometry();
+      for (const name of Object.keys(made.attributes)) copy.setAttribute(name, made.attributes[name].clone());
+      return copy;
+    },
+    /** The line made for `key`, if the latest title had it. */
+    line(key) { if (lines.has(key)) used.add(key); return lines.get(key) ?? null; },
+    keep(key, line) { line.geometry.userData.kept = true; lines.set(key, line); used.add(key); },
+    /** A title is made: the lines it did not ask for go. */
+    sweep() {
+      for (const [key, line] of lines) if (!used.has(key)) { line.geometry.dispose(); lines.delete(key); }
+      used.clear();
+    },
+  };
+}
+
+/**
  * One line of text as extruded glyphs, centred on x = 0 with its baseline on y = 0 (block px): capitals `cap` px high,
  * spread to `target` px by letter-spacing within `track`, never wider than `most` (fx/caption.js).
  * -> { geometry, width, cap (both as drawn: a long line is made smaller) }, or null if there is nothing to draw.
- * A character the font has no glyph for is left out; a gap stays where it was.
+ * A character the font has no glyph for is left out; a gap stays where it was. `store`: see glyphStore.
  */
-function textLine(font, text, { cap, target, most, track, depth, bevel }) {
+function textLine(font, text, { cap, target, most, track, depth, bevel }, store = null) {
+  const key = store && JSON.stringify([text, cap, target, most, track, depth, bevel]), kept = store?.line(key);
+  if (kept) return kept;
   const size = 100;
   const unit = size / font.data.resolution;
   const box = (shapes) => { const b = new THREE.Box2(); for (const s of shapes) for (const p of s.getPoints(6)) b.expandByPoint(p); return b; };
   const k = cap / (CAP_UNITS * unit);                  // px per unit of the shapes
+  const glyphOf = (ch) => {
+    const shapes = font.generateShapes(ch, size);
+    return { ch, adv: font.data.glyphs[ch].ha * unit, shapes, box: box(shapes) };
+  };
   const glyphs = [...text].map((ch) => {
     if (ch === ' ' || !font.data.glyphs[ch]) return { adv: SPACE * cap / k, shapes: null };
-    const shapes = font.generateShapes(ch, size);
-    return { adv: font.data.glyphs[ch].ha * unit, shapes, box: box(shapes) };
+    if (!store) return glyphOf(ch);
+    if (!store.glyphs.has(ch)) store.glyphs.set(ch, glyphOf(ch));
+    return store.glyphs.get(ch);
   });
   while (glyphs.length && !glyphs[0].shapes) glyphs.shift();
   while (glyphs.length && !glyphs[glyphs.length - 1].shapes) glyphs.pop();
@@ -86,9 +128,10 @@ function textLine(font, text, { cap, target, most, track, depth, bevel }) {
   const fit = fitLine({ natural, gaps: glyphs.length - 1, cap: cap / k, target: target / k, most: most / k, track });
   const parts = [];
   let x = -first.box.min.x;
+  const solid = (g) => new THREE.ExtrudeGeometry(g.shapes, { depth: depth / k, bevelEnabled: true, bevelThickness: bevel / k, bevelSize: bevel / k, bevelSegments: 2, curveSegments: 8 });
   for (const g of glyphs) {
     if (g.shapes) {
-      const geo = new THREE.ExtrudeGeometry(g.shapes, { depth: depth / k, bevelEnabled: true, bevelThickness: bevel / k, bevelSize: bevel / k, bevelSegments: 2, curveSegments: 8 });
+      const geo = store ? store.solid(`${depth / k} ${bevel / k}`, g.ch, () => solid(g)) : solid(g);
       geo.translate(x - fit.width / 2, 0, -depth / k);
       parts.push(geo);
     }
@@ -96,7 +139,9 @@ function textLine(font, text, { cap, target, most, track, depth, bevel }) {
   }
   const geometry = mergeGeometries(parts);
   geometry.scale(k * fit.shrink, k * fit.shrink, k * fit.shrink);
-  return { geometry, width: fit.width * k * fit.shrink, cap: cap * fit.shrink };
+  const line = { geometry, width: fit.width * k * fit.shrink, cap: cap * fit.shrink };
+  store?.keep(key, line);
+  return line;
 }
 
 /** The face of polished gold: a banded "horizon" gradient, y = 0 (foot) .. 1 (top). */
@@ -282,10 +327,11 @@ function makeBokeh(count = 220) {
  * in its own colours or — `gold` — filled with the title's gold over its shape.
  * pic: { texture (linear light, colour multiplied by alpha), width, height, uv: [u0, v0, u1, v1] of its inked part,
  *        radius: how far the ink reaches from the middle of that part }
+ * EMBLEM: where the circle stands (the layout's `emblem`); size: the settings' emblemSize.
  */
-function makePicture(pic, gold) {
+function makePicture(pic, gold, EMBLEM, size) {
   // inscribed: at emblemSize 1 the ink reaches 0.86 of the circle's radius
-  const k = 0.86 * EMBLEM.k * RING.r * TITLE.emblemSize / pic.radius;
+  const k = 0.86 * EMBLEM.k * RING.r * size / pic.radius;
   const w = pic.width * k, h = pic.height * k;
   const geo = new THREE.PlaneGeometry(w, h);
   const uv = geo.attributes.uv, [u0, v0, u1, v1] = pic.uv;
@@ -348,9 +394,16 @@ function makeCompass() {
   };
 }
 
-/** `picture`: what core/assets.js made of the emblem's file, if src/brand.js names one and it loaded. */
-export function makeTitle(picture = null) {
+let warned = '';      // the characters the last warning named (the dev server builds the title anew at every change)
+
+/**
+ * The title as the settings `s` (titleSettings) describe it.
+ * `picture`: what core/assets.js made of the emblem's file, if the settings name one and it loaded.
+ * `store`: a glyphStore, where one title follows another.
+ */
+export function makeTitle(s = TITLE, picture = null, store = null) {
   const group = new THREE.Group();
+  const L = layoutOf(s), EMBLEM = L.emblem, rows = L.rows;
 
   // light beams, on a plane that exactly fills the frame far behind the title
   const far = 40, h = 2 * far * Math.tan(Math.PI / 8);
@@ -365,7 +418,7 @@ export function makeTitle(picture = null) {
   const golds = [];                                     // the materials one highlight sweeps across
 
   // ---- emblem ----
-  const kind = TITLE.emblem === 'image' && !picture ? 'compass' : TITLE.emblem;      // a picture that did not load: the compass
+  const kind = s.emblem === 'image' && !picture ? 'compass' : s.emblem;      // a picture that did not load: the compass
   const emblem = new THREE.Group();
   emblem.scale.setScalar(EMBLEM.k);
   emblem.position.set(EMBLEM.x - EMBLEM.k * RING.x, EMBLEM.y - EMBLEM.k * RING.y, 0);
@@ -374,19 +427,18 @@ export function makeTitle(picture = null) {
   if (compass) { emblem.add(compass.hinge); golds.push(compass.gold); }
 
   let ring = null;
-  if (TITLE.ring) {
+  if (s.ring) {
     ring = new THREE.Mesh(new THREE.RingGeometry(RING.r - 60, RING.r + 60, 160, 1), ringMaterial());
     ring.position.set(RING.x, RING.y, -7);              // behind the front faces of the legs: the tips stand on the circle
     ring.renderOrder = 3;
     emblem.add(ring);
   }
 
-  const plate = kind === 'image' ? makePicture(picture, TITLE.emblemGold ?? picture.dark) : null;
+  const plate = kind === 'image' ? makePicture(picture, s.emblemGold ?? picture.dark, EMBLEM, s.emblemSize) : null;
   if (plate) { block.add(plate); golds.push(plate.material); }
 
   // ---- caption and tagline ----
   const serif = new Font(serifData);
-  const rows = textRows();
   const textMesh = (line, y) => {
     if (!line) return null;
     const mesh = new THREE.Mesh(line.geometry, goldMaterial(line.cap));
@@ -394,11 +446,14 @@ export function makeTitle(picture = null) {
     block.add(mesh); golds.push(mesh.material);
     return mesh;
   };
-  const captionLine = CAPTION ? textLine(serif, CAPTION, { cap: rows.cap, target: LINE_W, most: LINE_MOST, track: TRACK, depth: 5, bevel: 0.5 }) : null;
+  const captionLine = L.caption ? textLine(serif, L.caption, { cap: rows.cap, target: LINE_W, most: LINE_MOST, track: TRACK, depth: 5, bevel: 0.5 }, store) : null;
   const caption = textMesh(captionLine, rows.captionY);
-  const taglineLine = TAGLINE ? textLine(serif, TAGLINE, { cap: rows.tag, target: captionLine.width, most: LINE_MOST, track: TAG.track, depth: 3, bevel: 0.4 }) : null;
+  const taglineLine = L.tagline ? textLine(serif, L.tagline, { cap: rows.tag, target: captionLine.width, most: LINE_MOST, track: TAG.track, depth: 3, bevel: 0.4 }, store) : null;
   const tagline = textMesh(taglineLine, rows.taglineY);
-  if (LACKING.length) console.warn(`brand.js: the title's font has no glyphs for ${LACKING.join(' ')} — they are left out`);
+  store?.sweep();
+  const lack = L.lacking.join(' ');
+  if (lack && lack !== warned) console.warn(`brand.js: the title's font has no glyphs for ${lack} — they are left out`);
+  warned = lack;
 
   // The second line's letters are small and cross the two light beams, which are as bright as their gold: a soft
   // shade behind the line keeps it readable. Full along the line, gone 5.5 capitals past its ends and 3 above and below.
@@ -430,9 +485,22 @@ export function makeTitle(picture = null) {
     // what the shot needs to know about the title as it is set
     info: {
       emblem: kind,
+      pictureMissing: s.emblem === 'image' && !picture,      // the settings name a picture and it did not load
+      lacking: L.lacking,
       ring: Boolean(ring),
       // the caption against the placeholder's: its width, and how much higher (block px) the tops of its capitals are
       caption: captionLine ? { wide: captionLine.width / LINE_W, higher: rows.captionY + captionLine.cap - (CAP_H - 196) } : null,
+      // how low the text reaches (block px, y up; null without text): on the screen that is TITLE_CENTRE[1] - titleScale(f) * bottom
+      bottom: taglineLine ? rows.taglineY - DESCENT * taglineLine.cap : captionLine ? rows.captionY - DESCENT * captionLine.cap : null,
+    },
+    /** Video pixel of the point of the circle that is drawn when `p` (0..1) of it is done, at frame f. */
+    ringPoint(p, f) {
+      const a = RING_START + p * Math.PI * 2, S = titleScale(f);
+      return [TITLE_CENTRE[0] + S * (EMBLEM.x + EMBLEM.k * RING.r * Math.cos(a)), TITLE_CENTRE[1] - S * (EMBLEM.y + EMBLEM.k * RING.r * Math.sin(a))];
+    },
+    /** Frees what the title put on the GPU (not the emblem's picture, nor a line of the store: those belong to others). */
+    dispose() {
+      group.traverse((o) => { if (o.geometry && !o.geometry.userData.kept) o.geometry.dispose(); o.material?.dispose(); });
     },
     /**
      * f: frame; o: { opacity (emblem), open (0..1, legs), ring (0..1, circle drawn), ringLevel, caption (opacity),
@@ -479,4 +547,30 @@ export function makeTitle(picture = null) {
       bokeh.visible = o.bokeh > 0.001;
     },
   };
+}
+
+// ---- dev server: other settings under the running film ----------------------------------------------------
+// src/brand.js is saved — by hand or by the title tool (dev/titler.js) — or the tool tries settings the file does not
+// have yet. The shot that shows the title (shots/s17.js) then builds it anew: nothing is loaded again but a new
+// picture for the emblem. The build has none of this: there the settings are what they were when the page loaded.
+const shown = new Set();
+/** `fn(settings, anew)` is called whenever other settings are to be shown. */
+export function onTitle(fn) { shown.add(fn); }
+/**
+ * Shows the title as `raw` — what src/brand.js exports — sets it.
+ * `anew`: the emblem's picture was replaced under the same name and has to be read again.
+ */
+export function showTitle(raw, anew = false) {
+  TITLE = titleSettings(raw);
+  if (typeof document !== 'undefined') document.title = pageNames(TITLE).tab;
+  for (const fn of shown) fn(TITLE, anew);
+}
+/** What src/brand.js exports now, and who is told when it changes (the title tool takes that over: it may hold text that is not saved yet). */
+export const brandFile = { raw: brand, changed: (raw) => showTitle(raw) };
+if (import.meta.hot) {
+  import.meta.hot.accept('../brand.js', (mod) => {
+    if (!mod) return;      // the file does not parse: the page says so, the title stays
+    brandFile.raw = mod.default;
+    brandFile.changed(mod.default);
+  });
 }

@@ -14,14 +14,15 @@ export const MEDIA_FILE = /\.(jpe?g|png|webp|avif|gif|mp4|webm|m4v|mov|ogv)$/i;
 export const MAX_UPLOAD = 95 * 1024 * 1024;
 
 /**
- * A file name fit for public/media/, for an address and for a line of media.js; null if no window can show such a file.
+ * A file name fit for public/media/, for an address and for a line of media.js; null if no window can show such a file
+ * (`allowed`: what the extension has to be — the title tool takes other files than the windows do, brandLine.js).
  * Letters of any alphabet, digits, spaces and . _ - ( ) + , @ stay, anything else becomes an underscore.
  */
-export function safeName(name) {
+export function safeName(name, allowed = MEDIA_FILE) {
   let s = String(name ?? '').normalize('NFC').split(/[\\/]/).pop();
   s = s.replace(/[^\p{L}\p{N} ._()+,@-]/gu, '_').replace(/\s+/g, ' ').replace(/^[. ]+/, '').trim();
   const dot = s.lastIndexOf('.');
-  if (dot < 1 || !MEDIA_FILE.test(s)) return null;
+  if (dot < 1 || !allowed.test(s)) return null;
   return s.slice(0, dot).slice(0, 100).trim() + s.slice(dot);
 }
 
@@ -72,7 +73,7 @@ export function cleanSettings(cfg) {
 }
 
 /** Index where a `//` comment starts in a line of code (outside strings), or -1. */
-function commentAt(line) {
+export function commentAt(line) {
   let q = '';
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
@@ -84,7 +85,7 @@ function commentAt(line) {
 }
 
 /** A line of code without its comment and with every string emptied — what is left is structure. */
-function bare(line) {
+export function bare(line) {
   const end = commentAt(line);
   let q = '', out = '';
   for (let i = 0; i < (end < 0 ? line.length : end); i++) {

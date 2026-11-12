@@ -138,8 +138,9 @@ const FULL_ADDRESS = /^([a-z][a-z0-9+.-]*:)?\/\//i;
  * in linear light with its colour multiplied by alpha (so that its edges filter cleanly); the rest tells where its
  * inked part is (its box in texels and in uv, and how far the ink reaches from the middle of that box) and whether
  * it is a nearly black shape (the title then fills it with gold). Resolves to null if the picture cannot be used.
+ * Used by loadAssets below and, on the dev server, when the settings change under the running film (shots/s17.js).
  */
-function loadEmblem(src) {
+export function loadEmblem(src, anew = false) {
   return new Promise((resolve) => {
     const fail = (why) => { console.warn(`brand.js: ${why} — the compass is shown instead`); resolve(null); };
     const img = new Image();
@@ -216,7 +217,8 @@ function loadEmblem(src) {
         resolve({ texture: t, width: x1 - x0 + 1, height: y1 - y0 + 1, radius: Math.sqrt(far), uv: [x0 / w, (h - 1 - y1) / h, (x1 + 1) / w, (h - y0) / h], dark });
       } catch (e) { fail(`cannot read the emblem ${src} (${e.message})`); }
     };
-    img.src = urlOf(src);
+    // `anew`: the file was replaced under the same name (dev server) — a page keeps the pictures it has shown by address
+    img.src = urlOf(src) + (anew ? `${src.includes('?') ? '&' : '?'}anew=${Date.now()}` : '');
   });
 }
 

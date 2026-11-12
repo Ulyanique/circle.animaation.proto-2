@@ -175,13 +175,21 @@ function rememberFrame(now = false) {
 // (a steady lower resolution looks far better than a stuttering camera).
 const MAX_PIXELS = 3072 * 1728;
 let quality = 1;
+let reserve = 0;      // dev server: this much of the window's right side is kept free of the film (setReserve)
 function layout() {
-  const aspect = 16 / 9;
-  const w = Math.min(window.innerWidth, window.innerHeight * aspect), h = w / aspect;
+  const aspect = 16 / 9, boxW = window.innerWidth - reserve;
+  const w = Math.min(boxW, window.innerHeight * aspect), h = w / aspect;
   let ratio = params.has('dpr') ? Number(params.get('dpr')) : Math.min(window.devicePixelRatio || 1, 3);
   if (!params.has('dpr')) ratio = Math.min(ratio, Math.sqrt(MAX_PIXELS / Math.max(1, w * h))) * quality;
-  stage.resize(window.innerWidth, window.innerHeight, ratio);
+  stage.resize(boxW, window.innerHeight, ratio);
   touch();
+}
+/** Dev server: the film leaves `px` at the right of the window free — a tool's panel stands there, beside the picture. */
+function setReserve(px) {
+  if (px === reserve) return;
+  reserve = px;
+  stageEl.style.right = px ? `${px}px` : '';
+  layout();
 }
 window.addEventListener('resize', layout);
 document.addEventListener('visibilitychange', touch);      // a tab that comes back may have lost its picture
@@ -315,6 +323,12 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
   window.__ready = true;
   requestAnimationFrame(tick);
 
-  // Dev server only: the placement tool (key E, or ?edit) — drag a picture inside its window and save its line
-  if (import.meta.env.DEV && !window.__manual) import('./dev/placer.js').then((m) => m.startPlacer(player, params.has('edit')));
+  // Dev server only: the placement tool (key E, or ?edit) — drag a picture inside its window and save its line —
+  // and the title tool (key T, or ?title) — type the caption, drop a logo, save src/brand.js
+  if (import.meta.env.DEV && !window.__manual) {
+    Promise.all([import('./dev/placer.js'), import('./dev/titler.js')]).then(([placer, titler]) => {
+      placer.startPlacer(player, params.has('edit'));
+      titler.startTitler(player, stage, params.has('title'), setReserve);
+    });
+  }
 });

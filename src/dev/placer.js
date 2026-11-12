@@ -9,52 +9,18 @@
 import { slots, placeAt, setFixed, fitParts, fixedByDefault, mediaFor, adoptSettings, CARD } from '../core/slots.js';
 import { VIDEO_W, VIDEO_H, FPS, LAST_FRAME, clamp, lerp, timeToFrame, touch } from '../core/util.js';
 import { MAX_UPLOAD, mediaLine, safeName } from './mediaLine.js';
+import { addStyle, hudButton, megabytes, openTool, releaseKeys, tool, toolOpen } from './panel.js';
 
 const MAX_SIDE = 4096;      // longer side a photo keeps: the film puts no more than that on the GPU (core/assets.js)
 const ZOOM_SLIDER = 4;      // the slider's right end (the wheel goes on to 8)
 
 const CSS = `
 #stage.placing #view { touch-action: none; }
-#placer {
-  position: absolute; top: 14px; right: 14px; width: 330px; max-width: calc(100% - 28px); max-height: calc(100% - 28px); overflow: auto;
-  padding: 12px 14px 10px; border-radius: 14px; z-index: 5; box-sizing: border-box;
-  background: rgba(12, 10, 6, 0.86); backdrop-filter: blur(8px); border: 1px solid rgba(201, 164, 90, 0.3);
-  color: #d8bd84; font-size: 12px; line-height: 1.45; user-select: none;
-}
-#placer[hidden], #placer [hidden] { display: none !important; }
-#placer header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #f1d79a; font-size: 13px; }
-#placer button, #placer select {
-  font: inherit; color: #e6cb8f; background: rgba(201, 164, 90, 0.12); border: 1px solid rgba(201, 164, 90, 0.3);
-  border-radius: 8px; padding: 4px 9px; cursor: pointer;
-}
-#placer button:hover:not(:disabled) { background: rgba(201, 164, 90, 0.26); }
-#placer button:disabled, #placer select:disabled { opacity: 0.4; cursor: default; }
-#placer header button { border: 0; background: transparent; font-size: 16px; line-height: 1; padding: 2px 6px; }
 #placer .nav { display: flex; align-items: center; gap: 8px; }
 #placer .nav button { display: flex; padding: 7px 8px; }
 #placer .nav span { flex: 1; text-align: center; color: #f6e2ae; }
-#placer .file { display: flex; gap: 6px; margin-top: 8px; }
-#placer select { flex: 1; min-width: 0; background: #1c170d; padding: 4px 6px; }
 #placer .vals { margin: 8px 0 4px; font-variant-numeric: tabular-nums; color: #f1d79a; min-height: 1.45em; }
 #placer .vals i { font-style: normal; color: #a48a55; }
-#placer label { display: flex; align-items: center; gap: 7px; margin: 3px 0; cursor: pointer; }
-#placer label small { color: #a48a55; font-size: 11px; }
-#placer label.sl { cursor: default; }
-#placer label.sl span { width: 58px; color: #a48a55; }
-#placer input[type=range] { flex: 1; min-width: 0; accent-color: #c9a45a; margin: 0; height: 16px; }
-#placer input[type=checkbox] { accent-color: #c9a45a; margin: 0; }
-#placer pre {
-  margin: 8px 0; padding: 7px 8px; border-radius: 8px; background: rgba(0, 0, 0, 0.45); color: #f6e2ae; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
-  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text;
-}
-#placer .acts { display: flex; gap: 6px; flex-wrap: wrap; }
-#placer .acts.small { margin: 5px 0 6px; }
-#placer .acts.small button { padding: 2px 8px; font-size: 11px; }
-#placer .acts.main button { flex: 1; }
-#placer .acts.main button:first-child { flex: 1 0 100%; background: rgba(201, 164, 90, 0.3); color: #fff3d0; }
-#placer p { margin: 8px 0 0; color: #a48a55; font-size: 11px; }
-#placer p.msg { color: #f1d79a; min-height: 1.45em; font-size: 12px; }
-#placer p.msg.bad { color: #ff9c7a; }
 #placer-tags { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
 #placer-tags[hidden] { display: none; }
 #placer-tags span {
@@ -65,8 +31,6 @@ const CSS = `
 #placer-tags span.sel { border-color: #f6e2ae; color: #fff3d0; background: rgba(60, 44, 14, 0.85); }
 #placer-tags span.still { opacity: 0.6; }
 #placer-tags span.dirty::after { content: ' •'; color: #ffcf6a; }
-#hud #placer-open svg { position: absolute; inset: 0; margin: auto; }
-#hud #placer-open.on { background: rgba(201, 164, 90, 0.32); color: #fff3d0; }
 #placer-tags span.hot { border-color: #fff; color: #fff; background: rgba(150, 108, 30, 0.95); opacity: 1; transform: translate(-50%, -50%) scale(1.25); }
 `;
 
@@ -90,7 +54,6 @@ const HTML = `
 `;
 
 const round = (v, digits) => Number(v.toFixed(digits));
-const megabytes = (n) => (n < 1e5 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 2 ** 20).toFixed(1).replace('.', ',')} МБ`);
 const READ_ONLY = 'Запись выключена: она работает по адресу localhost на том компьютере, где запущен сервер. Строку можно скопировать в src/media.js.';
 
 /**
@@ -127,19 +90,15 @@ async function shrink(file) {
 
 export function startPlacer(player, openNow = false) {
   const canvas = document.getElementById('view'), stageEl = document.getElementById('stage');
-  document.head.appendChild(Object.assign(document.createElement('style'), { textContent: CSS }));
+  addStyle(CSS);
   const panel = Object.assign(document.createElement('div'), { id: 'placer', hidden: true, innerHTML: HTML });
   const tags = Object.assign(document.createElement('div'), { id: 'placer-tags', hidden: true });
   stageEl.append(tags, panel);
-  // the way in for those who do not know the key: a button in the player's bar
-  const opener = Object.assign(document.createElement('button'), {
-    id: 'placer-open', title: 'Свои фото и видео в окнах: подгонка кадра (E)',
-    innerHTML: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+  const opener = hudButton('placer-open', 'Свои фото и видео в окнах: подгонка кадра (E)', 'Подгонка кадра в окнах',
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>'
       + '<path d="M3.5 11.5 6.5 8l2 2 1.5-1.5 2.5 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/><circle cx="10.8" cy="5.8" r="1" fill="currentColor"/></svg>',
-  });
-  opener.setAttribute('aria-label', 'Подгонка кадра в окнах');
-  document.getElementById('hud')?.appendChild(opener);
-  opener.addEventListener('click', () => setOpen(!open));
+    () => setOpen(!open));
+  tool('placer', () => setOpen(false));
   const $ = (q) => panel.querySelector(q);
   const el = {
     name: $('.nav span'), file: $('select'), pick: $('[data-a=pick]'), input: $('input[type=file]'), vals: $('.vals'),
@@ -356,6 +315,7 @@ export function startPlacer(player, openNow = false) {
   }
   function setOpen(v) {
     open = v;
+    toolOpen('placer', v);      // the title tool closes when this one opens
     panel.hidden = tags.hidden = !v;
     stageEl.classList.toggle('placing', v);
     opener.classList.toggle('on', v);
@@ -433,6 +393,7 @@ export function startPlacer(player, openNow = false) {
       say(e.target.checked ? 'Поставьте кадр в начале окна и в конце — кнопки «к началу» и «к концу».' : '');
     }
   });
+  releaseKeys(panel);
   // keys pressed inside the panel are the panel's own (arrows move a slider, they do not wind the film)
   panel.addEventListener('keydown', (e) => { if (e.code !== 'KeyE' || /^(INPUT|SELECT)$/.test(e.target.tagName)) e.stopPropagation(); });
 
@@ -490,7 +451,8 @@ export function startPlacer(player, openNow = false) {
   });
 
   // ---- a file dropped from the computer -----------------------------------------------------------
-  const carriesFile = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  // (with the title tool open, a dropped file is a logo for the title: titler.js)
+  const carriesFile = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files') && (openTool() || 'placer') === 'placer';
   window.addEventListener('dragover', (e) => {
     if (!carriesFile(e)) return;
     e.preventDefault();      // or the browser would open the file in place of the page
