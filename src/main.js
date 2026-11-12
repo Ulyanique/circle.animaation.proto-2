@@ -6,6 +6,7 @@ import { loadAssets, restorePhotos } from './core/assets.js';
 import { syncVideos, finishSlots } from './core/slots.js';
 import { buildShots, linkShots, FOOTAGE } from './shots/index.js';
 import { makeHero } from './fx/hero.js';
+import { TITLE } from './fx/title.js';
 
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -223,7 +224,7 @@ setScope(scope);
 
 // ---- boot -----------------------------------------------------------------------------------
 stage.renderer.domElement.addEventListener('webglcontextrestored', () => { restorePhotos(); touch(); });      // after three.js's own listener
-loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t)).then((assets) => {
+loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image }).then((assets) => {
   player.shots = buildShots(assets, stage);
   player.links = linkShots(player.shots);
   finishSlots(player.links);      // what each window shows of itself is known only now, with the flights linked

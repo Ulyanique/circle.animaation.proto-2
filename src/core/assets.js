@@ -1,5 +1,5 @@
-// Asset loading: what the windows show (placeholder stills, or the photos / videos chosen in src/media.js) and the
-// soundtrack.
+// Asset loading: what the windows show (placeholder stills, or the photos / videos chosen in src/media.js), the
+// picture that stands for the emblem of the final title (src/brand.js) and the soundtrack.
 
 import * as THREE from 'three';
 import { mediaFor, isVideo, CARD } from './slots.js';
@@ -129,6 +129,97 @@ function makeCard(cfg) {
   return t;
 }
 
+const EMBLEM_SIDE = 1024;      // longer side of the emblem's picture on the GPU (on a 4K screen it is about that big)
+const FULL_ADDRESS = /^([a-z][a-z0-9+.-]*:)?\/\//i;
+
+/**
+ * The picture that stands for the emblem of the final title (src/brand.js): an SVG, PNG or WebP with a see-through
+ * background. Resolves to { texture, width, height, radius, uv: [u0, v0, u1, v1], dark }: the texture holds the picture
+ * in linear light with its colour multiplied by alpha (so that its edges filter cleanly); the rest tells where its
+ * inked part is (its box in texels and in uv, and how far the ink reaches from the middle of that box) and whether
+ * it is a nearly black shape (the title then fills it with gold). Resolves to null if the picture cannot be used.
+ */
+function loadEmblem(src) {
+  return new Promise((resolve) => {
+    const fail = (why) => { console.warn(`brand.js: ${why} — the compass is shown instead`); resolve(null); };
+    const img = new Image();
+    if (FULL_ADDRESS.test(src)) img.crossOrigin = 'anonymous';
+    img.onerror = () => fail(`cannot load the emblem ${src}`);
+    img.onload = () => {
+      try {
+        const nw = img.naturalWidth || 300, nh = img.naturalHeight || 150;
+        const vector = /\.svg([?#]|$)/i.test(src);       // drawn at any size it is asked for; a bitmap is only ever made smaller
+        const c = document.createElement('canvas'), g = c.getContext('2d', { willReadFrequently: true });
+        /**
+         * The part (sx, sy, sw, sh) of the picture, drawn w × h -> its pixels: sRGB bytes, colour not multiplied by alpha.
+         * The whole picture is drawn, placed so that the part fills the canvas: asked for the part outright (a source
+         * rectangle), Chromium drew nothing of an SVG that declares no size of its own, only a viewBox.
+         */
+        const draw = (sx, sy, sw, sh, w, h) => {
+          c.width = w; c.height = h;                     // (which also empties the canvas)
+          g.imageSmoothingQuality = 'high';
+          g.drawImage(img, -sx * w / sw, -sy * h / sh, nw * w / sw, nh * h / sh);
+          return g.getImageData(0, 0, w, h).data;
+        };
+        // 1. A small draft shows where the ink is: a logo often sits somewhere on a much bigger see-through sheet.
+        const dk = vector ? 512 / Math.max(nw, nh) : Math.min(1, 512 / Math.max(nw, nh));
+        const dw = Math.max(1, Math.round(nw * dk)), dh = Math.max(1, Math.round(nh * dk));
+        const draft = draw(0, 0, nw, nh, dw, dh);
+        let bx0 = dw, by0 = dh, bx1 = -1, by1 = -1;
+        for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) if (draft[(y * dw + x) * 4 + 3]) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+        if (bx1 < 0) { fail(`the emblem ${src} is empty: every pixel of it is see-through`); return; }
+        // 2. That part alone (with a draft pixel to spare on each side, on whole pixels of the picture: a bitmap that
+        //    needs no scaling is then copied as it is), as big as the film can use.
+        const sx = Math.max(0, Math.floor((bx0 - 1) * nw / dw)), sy = Math.max(0, Math.floor((by0 - 1) * nh / dh));
+        const sw = Math.min(nw, Math.ceil((bx1 + 2) * nw / dw)) - sx, sh = Math.min(nh, Math.ceil((by1 + 2) * nh / dh)) - sy;
+        const k = vector ? EMBLEM_SIDE / Math.max(sw, sh) : Math.min(1, EMBLEM_SIDE / Math.max(sw, sh));
+        const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+        const px = draw(sx, sy, sw, sh, w, h);
+        c.width = c.height = 0;
+        const lin = new Float32Array(256), enc = new Uint8Array(4097);      // sRGB byte -> linear; linear (in 4096ths) -> sRGB byte
+        for (let i = 0; i < 256; i++) { const v = i / 255; lin[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+        for (let i = 0; i <= 4096; i++) { const v = i / 4096; enc[i] = Math.round(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055)); }
+        const out = new Uint8Array(w * h * 4);
+        let x0 = w, y0 = h, x1 = -1, y1 = -1, ink = 0, light = 0;
+        for (let y = 0; y < h; y++) {
+          const row = (h - 1 - y) * w * 4;               // the texture's first row is the picture's bottom one
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4, a = px[i + 3];
+            if (a === 0) continue;
+            const o = row + x * 4, al = a / 255, r = lin[px[i]], gr = lin[px[i + 1]], b = lin[px[i + 2]];
+            out[o] = enc[Math.round(r * al * 4096)]; out[o + 1] = enc[Math.round(gr * al * 4096)]; out[o + 2] = enc[Math.round(b * al * 4096)]; out[o + 3] = a;
+            if (a > 12) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+            ink += al; light += al * (0.2126 * r + 0.7152 * gr + 0.0722 * b);
+          }
+        }
+        if (x1 < 0) { fail(`the emblem ${src} is too faint to be seen`); return; }
+        // how far the ink reaches from the middle of its box: the title fits that circle, not the box, into its own
+        // (a star or a round seal would come out small if their empty corners counted)
+        const cx = (x0 + x1 + 1) / 2, cy = (y0 + y1 + 1) / 2;
+        let far = 0;
+        for (let y = y0; y <= y1; y++) {
+          const dy = Math.abs(y + 0.5 - cy) + 0.5;
+          for (let x = x0; x <= x1; x++) {
+            if (px[(y * w + x) * 4 + 3] <= 12) continue;
+            const dx = Math.abs(x + 0.5 - cx) + 0.5, d = dx * dx + dy * dy;
+            if (d > far) far = d;
+          }
+        }
+        const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.generateMipmaps = true;
+        t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+        t.needsUpdate = true;
+        if (upload) upload(t);
+        // nearly black and a shape (not a filled rectangle, like a photo): against the dark title it would not be seen
+        const dark = light / ink < 0.03 && ink < 0.98 * (x1 - x0 + 1) * (y1 - y0 + 1);
+        resolve({ texture: t, width: x1 - x0 + 1, height: y1 - y0 + 1, radius: Math.sqrt(far), uv: [x0 / w, (h - 1 - y1) / h, (x1 + 1) / w, (h - y0) / h], dark });
+      } catch (e) { fail(`cannot read the emblem ${src} (${e.message})`); }
+    };
+    img.src = urlOf(src);
+  });
+}
+
 function loadTexture(loader, url) {
   return new Promise((resolve) => {
     loader.load(url, (t) => {
@@ -140,11 +231,15 @@ function loadTexture(loader, url) {
   });
 }
 
-/** `toGpu(texture)`: puts a texture on the GPU at once — with it a photo's canvas is given back as soon as it is there. */
-export async function loadAssets(names, toGpu = null) {
+/**
+ * `toGpu(texture)`: puts a texture on the GPU at once — with it a photo's canvas is given back as soon as it is there.
+ * `emblem`: the picture of the title's emblem, if src/brand.js names one.
+ */
+export async function loadAssets(names, toGpu = null, { emblem = null } = {}) {
   upload = toGpu;
   const loader = new THREE.TextureLoader();
   const footage = {};
+  const picture = emblem ? loadEmblem(emblem) : null;
   await Promise.all(names.map(async (n) => {
     const cfg = mediaFor(n);
     const own = !cfg ? null : CARD ? makeCard(cfg) : await (isVideo(cfg.src) ? loadVideo(cfg) : loadPhoto(loader, cfg));
@@ -154,5 +249,5 @@ export async function loadAssets(names, toGpu = null) {
   const audio = new Audio(`${base}audio.m4a`);
   audio.preload = 'auto';
   audio.muted = true;
-  return { footage, audio };
+  return { footage, audio, emblem: await picture };
 }

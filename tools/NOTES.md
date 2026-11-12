@@ -26,6 +26,8 @@ Nothing in `tools/` is needed to run or build the site. `bash tools/setup.sh` re
     node slotshot.mjs F1,F2,.. OUTDIR [W H]                  # single frames with window videos settled (see Window slots)
     node boxcheck.mjs; node slotinfo.mjs; node vsync.mjs     # window boxes, numbers of the README table, video clock
     node heroprobe.mjs 0.4                                   # the light as drawn, sub-frame steps
+    node titleshot.mjs OUTDIR; node buildtest.mjs            # the final title with other settings; what the build ships (see The final title)
+    node /home/user/circle.animaation.proto-2/tools/captiontest.mjs      # the title's text, no browser (from the repo: it needs three.js)
     cd /tmp/work && /tmp/tools/venv/bin/python /home/user/work/bin/<tool>.py …   # system python has no numpy
 
 Full check (≈ 6 min; run it as a background process, and do not edit `src/` meanwhile):
@@ -249,6 +251,56 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   whatever a custom picture shows); s13's camera (tracked on the picture); the uv glide of a still inside its facet
   (skipped for own media); the per-screen `reveal` / `sepia` / `gain` keys of the shot definitions — these stay on
   for own media on purpose (the gold-to-colour reveal is part of the look). At most two screens per shot.
+
+## The final title (`src/brand.js` → `src/fx/title.js`)
+
+- **What it is.** Caption, second line and emblem of the final title are settings: `src/brand.js` (Russian header with
+  the keys). `src/fx/titleSettings.js` fills in the defaults; it is plain JS with no three.js and no browser in it
+  because three parties read it: the page (`fx/title.js`), the dev server and the build (`vite.config.js`, plugin
+  `brand`: the page's own name in index.html, the glyphs to ship, the font licence into `dist/`) and the checks.
+- **Text.** `textLine` in `title.js`: capitals `cap` px high, spread to `LINE_W` = 800 px by letter-spacing within
+  `TRACK` (in cap heights), never wider than `LINE_MOST` = 1000 px — past that the line is scaled down. The rule itself
+  is `fitLine` in `fx/caption.js`. The cap height is a constant (`CAP_UNITS` = 1002 font units: «Я», the letter the
+  title was drawn with, 983 + the 19 its leg dips below the line) and not measured from a glyph: the build may not
+  ship «Я». With the placeholder the arithmetic is the old one operation for operation, so its frames did not change.
+  Text is normalised to NFC (a Mac may hold «й» as «и» + a breve; the font has «й», not the breve).
+  Rows: `textRows()`; with nothing above (no emblem, no circle) the lines take the middle of the frame and may be
+  130 px high instead of 70. The sparkle of s17 (`glint`) is authored for the placeholder and moved by `title.info`.
+- **Font.** `src/fx/fonts/title-serif-600.json`: all 581 glyphs of Playfair Display SemiBold (@fontsource 5.3.0,
+  subsets latin, cyrillic, latin-ext, vietnamese), 570 kB, one glyph per line. The dev server serves it whole, the
+  build keeps the glyphs of caption + tagline (`keepGlyphs`) and warns about characters the font lacks. To make it
+  again: `mkdir /tmp/fontwork && cd /tmp/fontwork && npm install opentype.js @fontsource/playfair-display@5.3.0`,
+  copy `tools/font2json.mjs` there (it finds opentype.js next to itself), then the command in its header.
+  three.js adds `_cachedOutline` to every glyph object it has used: compare glyphs from a fresh parse of the file.
+- **Emblem picture.** `loadEmblem` in `core/assets.js`: a 512 px draft shows where the ink is → that part alone is
+  drawn at up to 1024 px (vector art at full size, a bitmap never enlarged) → a DataTexture that stores
+  enc(lin(rgb) · alpha): the GPU decodes it on sampling, so filtering and mip-maps work on premultiplied linear light
+  and edges get no dark fringe. `makePicture` in `title.js` draws it with `premultipliedAlpha`, in its own colours or
+  with `goldFace` over its alpha. Gold by default only if the ink is nearly black (mean linear luminance < 0.03) and
+  not a filled rectangle. Size: the farthest inked texel from the middle of the ink's box lands on 0.86 of the
+  circle's radius (fitting the box's diagonal instead left stars and round seals small).
+- **Second line.** Capitals 0.42 of the caption's, spread to the caption's width within 0.08–0.55 cap; fades in
+  f1032–1056 (s17). A soft dark plate behind it (`shade`, 60 % at most) — without it the small letters vanish where
+  they cross the beams' hot spots. No tagline → no plate, and the placeholder's frames stay as they were. A line the
+  font has not one glyph for is not a line (the emblem then takes the middle); a tagline without a caption is drawn
+  as the caption.
+  - Dead end: `drawImage` with a source rectangle on an SVG that declares no width / height (only a viewBox) — in
+    Chromium the cropped pass came out empty, while SVGs that declare a size were fine. The whole picture is drawn
+    instead, with a destination rectangle that puts the wanted part on the canvas; that works for both.
+  - Not an option: `texture.premultiplyAlpha` with an sRGB texture — the encoded values get multiplied, edges darken.
+- **Checks.** `node tools/captiontest.mjs` (plain node, from the repo: settings, page name, `fitLine`, the font file,
+  the glyphs a build keeps). `titleshot.mjs OUTDIR` (headless, needs the dev server; 19 variants + `hot` + `lost`, about 3 min;
+  pictures for the eye in OUTDIR; `ONLY=long,hot` for a few; `QUERY=scope` adds to the page's address; one custom
+  variant: `titleshot.mjs OUTDIR '{"caption":"…"}' 1010,1100`,
+  test pictures `media/_test_mark_colour.svg`, `_black.svg`, `_white.svg`, `_padded.png` exist while it runs).
+  `buildtest.mjs [OUTDIR]` (two builds into /tmp, `vite preview` on 4174, the title of the built site). The last two
+  rewrite `src/brand.js` and put the user's file back, also after a failure.
+  - `hot` first failed with "Execution context was destroyed": the open page loaded twice after one save (the dev
+    server logged two reloads within a second). Now the tools replace the file by rename instead of writing it in
+    place, and wait for the new text at `/src/brand.js` itself (not at a URL with a unique query); the page loads
+    once, and `hot` checks that. Which of the two changes cured it was not isolated.
+  - A WebGL canvas can be read (`toDataURL`, `drawImage`) only in the task that drew it; later it is blank.
+  - Frame 1213 is black by design (the film ends on a black frame): for "the title at its largest" look at 1212.
 
 ## Dead ends (do not retry)
 

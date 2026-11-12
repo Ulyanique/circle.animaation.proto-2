@@ -1,9 +1,10 @@
 // Shots 17+18 (f963–1213): the flare explodes into a burst of sparks (flash peak f974); through the fading flash the
 // emblem appears — a golden compass opens (f984–1008) and a point of light draws the circle around it (f1000–1040) —
 // then the caption rises below it (f1022–1050). The title holds until the end while the camera creeps towards it.
+// What the title says and shows is set in src/brand.js (fx/title.js).
 import * as THREE from 'three';
 import { track } from '../core/util.js';
-import { makeTitle, ringPointPx } from '../fx/title.js';
+import { makeTitle, ringPointPx, titleScale, TITLE_CENTRE } from '../fx/title.js';
 import { makeBurst } from '../fx/burst.js';
 
 const centre = track([[963, [665, 375]], [966, [645, 352]], [970, [640, 356]], [1003, [641, 362]]]);
@@ -17,18 +18,22 @@ const ringLevel = track([[1000, 1.3], [1040, 1.3], [1075, 0.95], [1213, 0.85]]);
 const tipI = track([[1000, 0], [1004, 0.8], [1033, 0.8], [1041, 0]]);    // the point of light that draws it
 const caption = track([[1022, 0, 'smooth'], [1046, 1]]);
 const rise = track([[1022, 8, 'out'], [1050, 0]]);
+const tagline = track([[1032, 0, 'smooth'], [1056, 1]]);             // the second line follows the caption
+const tagRise = track([[1032, 5, 'out'], [1060, 0]]);
 const rays = track([[963, 1], [970, 0.2], [1000, 0.2], [1010, 1]]);
 const beams = track([[1003, 0], [1009, 0.22], [1045, 1]]);
 const bokeh = track([[972, 0], [980, 1], [1003, 0.9], [1060, 0.32], [1120, 0.16], [1213, 0.1]]);
-const glint = track([[1046, [270, 512]], [1207, [1020, 524]]]);      // a sparkle that wanders along the caption
+// a sparkle that wanders along the tops of the caption's letters (placed for «Янтарный циркуль», see `spot` below)
+const glint = track([[1046, [270, 512]], [1207, [1020, 524]]]);
 const glintI = track([[1046, 0], [1066, 0.2], [1120, 0.12], [1190, 0.26], [1213, 0.2]]);
 
 export default {
   id: 's17',
-  make() {
+  make(assets) {
     const group = new THREE.Group();
     group.visible = false;
-    const title = makeTitle();
+    const title = makeTitle(assets.emblem);
+    const { ring: hasRing, caption: line } = title.info;
     const burst = makeBurst();
     group.add(title.group, burst);
     const size = new THREE.Vector2();
@@ -43,7 +48,7 @@ export default {
         const p = ringP(f);
         title.update(f, time, {
           opacity: opacity(f), open: open(f), ring: p, ringLevel: ringLevel(f), caption: caption(f), rise: rise(f),
-          beams: beams(f), bokeh: bokeh(f), px: size.y / 720,
+          tagline: tagline(f), tagRise: tagRise(f), beams: beams(f), bokeh: bokeh(f), px: size.y / 720,
         });
         const c = centre(f);
         burst.visible = f < 1004;
@@ -55,10 +60,11 @@ export default {
         if (f < 1042) {
           // the tip of light on the circle
           const q = ringPointPx(p, f);
-          gl.x = q[0]; gl.y = q[1]; gl.i = f >= 1000 ? tipI(f) : 0; gl.s = 0.5; gl.ring = 0; gl.rays = 0.7; gl.rot = time * 0.2;
+          gl.x = q[0]; gl.y = q[1]; gl.i = f >= 1000 && hasRing ? tipI(f) : 0; gl.s = 0.5; gl.ring = 0; gl.rays = 0.7; gl.rot = time * 0.2;
         } else {
-          const g = glint(f);
-          gl.x = g[0]; gl.y = g[1]; gl.i = f >= 1046 ? glintI(f) : 0; gl.s = 0.42; gl.ring = 0; gl.rays = 1; gl.rot = time * 0.1;
+          // the sparkle keeps to the caption as it is set: as far from the middle as the line is wide, at its letters' tops
+          const g = glint(f), spot = line ? [TITLE_CENTRE[0] + (g[0] - 645) * line.wide, g[1] - titleScale(f) * line.higher] : g;
+          gl.x = spot[0]; gl.y = spot[1]; gl.i = f >= 1046 && line ? glintI(f) : 0; gl.s = 0.42; gl.ring = 0; gl.rays = 1; gl.rot = time * 0.1;
         }
         st.post.flash = flash(f);
         st.post.flashColor = [1.0, 0.64, 0.32];
