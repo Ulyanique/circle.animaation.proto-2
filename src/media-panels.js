@@ -90,15 +90,6 @@ export class MediaPanel extends THREE.Group {
     this.frame.material.color.setHex(0x76603b);
     this.frame.material.emissiveIntensity=0;
     this.frame.material.roughness=.21;this.frame.material.metalness=1;
-    // A slender oblique facet behind one side catches the moving light without enclosing the image.
-    const side=this.index%2?1:-1,edge=side*(safeX+.11);
-    const finShape=new THREE.Shape();
-    finShape.moveTo(edge,-safeY-.2);
-    finShape.lineTo(edge+side*.12,-safeY+.05);
-    finShape.lineTo(edge+side*.3,safeY+.55);
-    finShape.lineTo(edge+side*.07,safeY+.22);finShape.closePath();
-    const fin=new THREE.Mesh(new THREE.ExtrudeGeometry(finShape,{depth:.045,bevelEnabled:false,steps:1}),this.frame.material);
-    fin.position.z=-.11;fin.renderOrder=this.frame.renderOrder;this.frame.add(fin);
     this.presentation=choosePresentation(this.index,aspect,this.layoutOverride);
     this.sectionSeams=[];
     if(this.presentation!=='whole'){
@@ -107,7 +98,7 @@ export class MediaPanel extends THREE.Group {
       for(const [section,cut] of seams){
         const [a,b]=seamEndpoints(cut,this.presentation);
         const curve=new THREE.LineCurve3(new THREE.Vector3((a.u-.5)*width,(a.v-.5)*height,0),new THREE.Vector3((b.u-.5)*width,(b.v-.5)*height,0));
-        const seam=new THREE.Mesh(new THREE.TubeGeometry(curve,1,.012,6,false),this.frame.material);
+        const seam=new THREE.Mesh(new THREE.TubeGeometry(curve,1,.006,6,false),this.frame.material);
         seam.renderOrder=this.frame.renderOrder;seam.userData.section=section;
         this.frame.add(seam);this.sectionSeams.push(seam);
       }
@@ -206,9 +197,9 @@ export class MediaPanel extends THREE.Group {
     opacity*=fade;
     this.visible = opacity*release > .001 && Boolean(this.face.material.map);
     // Depth writes let the beam go behind the screen instead of being composited on top.
-    this.face.material.opacity = release;
+    this.face.material.opacity = opacity*release;
     if(Math.abs(opacity-this.lastReveal)>1e-5 || (this.sectioned&&Math.abs(this.assembly-this.lastAssembly)>1e-5)){
-      const vertices=this.sectioned?sectionedTriangles(opacity,this.index%2===1,this.assembly,this.presentation):revealTriangles(opacity,this.index%2===1);
+      const vertices=this.sectioned?sectionedTriangles(1,this.index%2===1,this.assembly,this.presentation):revealTriangles(1,this.index%2===1);
       const attributes=this.face.geometry.attributes;
       vertices.forEach(({u,v,alpha,x=0,y=0,z=0},i)=>{
         attributes.position.setXYZ(i,(u-.5)*this.width+x,(v-.5)*this.height+y,z);
@@ -218,12 +209,12 @@ export class MediaPanel extends THREE.Group {
       this.face.geometry.setDrawRange(0,vertices.length);this.lastReveal=opacity;this.lastAssembly=this.assembly;
     }
     this.back.visible=opacity>.999&&!this.sectioned;
-    this.back.material.opacity = opacity*release;this.back.material.depthWrite=opacity>.999;
-    this.frame.material.opacity = opacity*opacity*.78*release;
-    this.frame.castShadow = opacity > .99;
+    this.back.material.opacity = opacity*release;this.back.material.depthWrite=opacity*release>.999;
+    this.frame.material.opacity = opacity*smoothMotion(.2,.85,opacity)*.38*release;
+    this.frame.castShadow = opacity*release > .99;
     // Fading screens cannot leave an invisible depth-blocking plate over the next screen.
-    this.frame.material.depthWrite = opacity > .999;
-    this.face.material.depthWrite = true;
+    this.frame.material.depthWrite = opacity*release > .999;
+    this.face.material.depthWrite = opacity*release > .999;
   }
 
   syncVideo(filmTime, playing, forceSeek = false) {

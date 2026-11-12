@@ -24,8 +24,8 @@ function clip(polygon,threshold,below,layout){
 }
 export function sectionOffset(index,assembly=1,mode='triptych'){
  const remaining=1-Math.max(0,Math.min(1,assembly));
- if(mode==='diptych')return {x:(index-.5)*(.1+.18*remaining),y:(index-.5)*.05*remaining,z:(index-.5)*(.07+.12*remaining)};
- return {x:(index===1?-.06:.06)*remaining,y:(index-1)*(.065+.08*remaining),z:(index-1)*.035+.1*remaining*(index===1?-1:1)};
+ if(mode==='diptych')return {x:(index-.5)*(.055+.18*remaining),y:(index-.5)*.05*remaining,z:(index-.5)*(.035+.12*remaining)};
+ return {x:(index===1?-.06:.06)*remaining,y:(index-1)*(.035+.08*remaining),z:(index-1)*.018+.1*remaining*(index===1?-1:1)};
 }
 
 // Partition the complete source: separation creates seams, never cropping or duplicating texels.

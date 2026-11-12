@@ -414,3 +414,11 @@ Baked paths now include cumulative arc length and reversible distance/time looku
 Shifted the existing seven-unit / 1.94-second C2 departure envelope forward: cards now fade from 11 to 4 units ahead of the camera, rather than 6.5 to -.5. This removes the oversized close-passing card still visible at 10.2 seconds in the preceding inspection. First-source reveal starts at 4.6 rather than 5.4 seconds to retain a settled readable interval before its earlier departure. All ten remain fully visible at their reading midpoint. Camera, source staging, light trajectory and finale unchanged.
 
 55 tests/build pass, including complete departure before close approach and full visibility at reading time. Desktop portable Chromium captured 7.2/9.2/10.2 seconds with ten slots/zero errors; 9.2 and 10.2 inspected, oversized first card is absent at 10.2. Captures are composition checks, not real-time hardware smoothness verification. Existing bundle warning remains.
+
+### Complete-silhouette media entry
+
+Changed live media entry from a clipped diagonal fragment to a full-source opacity reveal. At every nonzero reveal stage the complete UV rectangle/section partition is present, so approaching sources no longer look like rectangular scraps. The existing smooth timeline/source-blend envelope controls opacity; fully readable media remains opaque for the front/rear beam pass. Translucent faces/frames/backs no longer write depth, avoiding invisible occlusion during entry/exit. The retained geometric-reveal utility is still used for complete-source tessellation and legacy utility tests.
+
+Removed the oblique side-fin geometry, halved seam tube radius, narrowed final section gaps/depth offsets, and reduced/delayed metal-edge opacity so no bright structure precedes the media. Renamed the existing reveal control to “Плавное проявление”; schema key unchanged. Camera, leading ember, flight knots and finale unchanged.
+
+56 tests/build pass. New test verifies full UV silhouette even at .01 reveal, opacity/depth behavior and no side fin. Desktop portable Chromium captured 7.2/10.2/30.2 seconds, ten slots/zero errors; 7.2 and 30.2 inspected. At 30.2 the complete upcoming photo silhouette/label is visible instead of a clipped fragment. Real media/codec and hardware smoothness checks remain separate. Existing bundle warning remains.

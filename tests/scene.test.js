@@ -779,3 +779,21 @@ test('cards finish fading before close camera approach while retaining a full re
   assert.equal(mediaPassVisibility(panelZ+4,panelZ),0,'gone before near-plane enlargement');
  }
 });
+
+test('early media reveal keeps a complete source silhouette instead of a clipped fragment',async()=>{
+ const {MediaPanel}=await import('../src/media-panels.js');const {MeshPhysicalMaterial,Texture}=await import('three');
+ const material=new MeshPhysicalMaterial(),panel=new MediaPanel(1,material,null,null);panel.face.material.map=new Texture();
+ for(const progress of [.01,.1,.4,1]){
+  panel.setVisibility(progress,0,1);
+  assert.equal(panel.face.geometry.drawRange.count,6);
+  const uv=panel.face.geometry.attributes.uv;
+  const points=Array.from({length:6},(_,i)=>[uv.getX(i),uv.getY(i)]);
+  assert.ok(points.some(([u,v])=>u===0&&v===0));assert.ok(points.some(([u,v])=>u===1&&v===1));
+  assert.equal(panel.face.material.opacity,progress);
+  assert.equal(panel.face.material.depthWrite,progress>.999);
+  assert.ok(panel.frame.material.opacity<=progress*.38+1e-12);
+ }
+ panel.setVisibility(1,0,.5);assert.equal(panel.face.material.depthWrite,false);
+ assert.equal(panel.frame.children.length,0,'no broad side fin before media');
+ panel.face.material.map.dispose();panel.traverse(object=>object.geometry?.dispose());panel.frame.material.dispose();panel.face.material.dispose();panel.back.material.dispose();material.dispose();
+});

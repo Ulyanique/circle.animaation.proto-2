@@ -19,7 +19,7 @@ export const settingGroups=[
  ]],
  ['Медиа',[
   ['sectionedMedia','Секционная постановка медиа',true],['media','Показывать фото и видео',true],['frames','Металлические кромки',true],
-  ['mediaBrightness','Яркость медиа',1,.3,1.5,.05],['mediaReveal','Диагональное проявление',true],
+  ['mediaBrightness','Яркость медиа',1,.3,1.5,.05],['mediaReveal','Плавное проявление',true],
  ]],
  ['Камера и свет',[
   ['cameraGuidance','Акцент камеры на медиа',true],['parallax','Реакция на курсор',true],['cameraRoll','Наклон камеры',true],
