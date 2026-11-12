@@ -14,7 +14,7 @@ export class MediaPanel extends THREE.Group {
     this.loader = loader;
     this.onChange = onChange;
     this.onFrame = onFrame;
-    this.revealTime = index===0?5.4:4 + index * SHOT_INTERVAL;
+    this.revealTime = index===0?4.6:4 + index * SHOT_INTERVAL;
     this.layoutOverride="auto";this.presentation="whole";this.sectioned=index===0;this.assembly=0;this.lastAssembly=-1;this.sectionSeams=[];
     this.sourceBlend = 1;
     this.width = 11.5; this.height = 6.47;

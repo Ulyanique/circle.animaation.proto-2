@@ -495,7 +495,7 @@ test('passed media releases its rear silhouette smoothly before the next reading
  assert.equal(mediaPassVisibility(-34.2,-30),0);
  assert.equal(mediaPassVisibility(-16.2,-30),1);
  let previous=1;
- for(let z=-22;z>=-33;z-=.001){const value=mediaPassVisibility(z,-30);assert.ok(value<=previous+1e-12&&Math.abs(value-previous)<.001);previous=value;}
+ for(let z=-18;z>=-33;z-=.001){const value=mediaPassVisibility(z,-30);assert.ok(value<=previous+1e-12&&Math.abs(value-previous)<.001);previous=value;}
  assert.equal(previous,0);
 });
 
@@ -605,9 +605,9 @@ test('card release lasts nearly two seconds rather than a half-second near-camer
  const {mediaPassVisibility}=await import('../src/media-direction.js');
  const speed=18/5,duration=7/speed;
  assert.ok(duration>1.9);
- assert.equal(mediaPassVisibility(-23.5,-30),1);
- assert.equal(mediaPassVisibility(-30.5,-30),0);
- assert.ok(Math.abs(mediaPassVisibility(-27,-30)-.5)<1e-10);
+ assert.equal(mediaPassVisibility(-19,-30),1);
+ assert.equal(mediaPassVisibility(-26,-30),0);
+ assert.ok(Math.abs(mediaPassVisibility(-22.5,-30)-.5)<1e-10);
 });
 
 test('media camera stays in one side lane with slow bounded drift instead of slalom',async()=>{
@@ -684,7 +684,7 @@ test('cards alternate screen sides and face the viewer without tracking rotation
 test('sections are motionless before full reveal and remain settled in reading windows',async()=>{
  const {assemblyProgress,sectionOffset}=await import('../src/sectioned-media.js');
  for(let i=0;i<10;i++){
-  const reveal=i===0?5.4:4+i*5;
+  const reveal=i===0?4.6:4+i*5;
   assert.equal(assemblyProgress(reveal+1.7,reveal),1);
   for(const mode of ['triptych','diptych'])for(let section=0;section<(mode==='triptych'?3:2);section++){
    const settled=sectionOffset(section,1,mode);
@@ -768,4 +768,14 @@ test('baked arc-length lookup is monotonic, reversible and safe on stationary sp
  assert.equal(path.timeAtDistance(-1),0);assert.equal(path.timeAtDistance(1e6),4);
  const still=bakeLightPath([[0,1,2,3],[1,1,2,3]]);
  assert.ok(still.distanceAt(.5)<1e-10);assert.ok(Number.isFinite(still.timeAtDistance(0)));
+});
+
+test('cards finish fading before close camera approach while retaining a full reading moment',async()=>{
+ const {mediaPassVisibility}=await import('../src/media-direction.js');
+ const {travellingCameraPose}=await import('../src/choreography.js');
+ for(let i=0;i<10;i++){
+  const panelZ=-30-i*18,pose=travellingCameraPose(7.2+i*5,18,5,-30);
+  assert.equal(mediaPassVisibility(pose[2],panelZ),1,'fully visible at reading midpoint');
+  assert.equal(mediaPassVisibility(panelZ+4,panelZ),0,'gone before near-plane enlargement');
+ }
 });

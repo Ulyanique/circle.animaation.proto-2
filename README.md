@@ -408,3 +408,9 @@ Settings now includes “Сохранить кадр PNG”. It renders the curr
 Baked paths now include cumulative arc length and reversible distance/time lookup. Tail geometry is sampled uniformly in world distance instead of uniformly in flight time, giving curves more even segment density during fast bridges. A smooth tanh limiter caps the visible tail at 20 world units while retaining the existing 2.15-second age limit; unlike a hard clamp this does not introduce a kink as the cap engages. The leading ember's trajectory/timing, sparks, card staging and finale are unchanged.
 
 54 tests/build pass. Added monotonic/reversible arc-distance lookup and stationary-span finite-value tests. Desktop portable Chromium captured 7.2/10.2 seconds with ten slots/zero errors; bridge frame at 10.2 inspected. This is a geometry/composition check, not a hardware smoothness or FPS benchmark. Existing bundle warning remains.
+
+### Earlier card departure before close approach
+
+Shifted the existing seven-unit / 1.94-second C2 departure envelope forward: cards now fade from 11 to 4 units ahead of the camera, rather than 6.5 to -.5. This removes the oversized close-passing card still visible at 10.2 seconds in the preceding inspection. First-source reveal starts at 4.6 rather than 5.4 seconds to retain a settled readable interval before its earlier departure. All ten remain fully visible at their reading midpoint. Camera, source staging, light trajectory and finale unchanged.
+
+55 tests/build pass, including complete departure before close approach and full visibility at reading time. Desktop portable Chromium captured 7.2/9.2/10.2 seconds with ten slots/zero errors; 9.2 and 10.2 inspected, oversized first card is absent at 10.2. Captures are composition checks, not real-time hardware smoothness verification. Existing bundle warning remains.

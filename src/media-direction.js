@@ -28,7 +28,7 @@ export function mediaReadingFov(camera,panel,mobile=false){
  return Math.max(mobile?68:52,Math.min(mobile?90:68,fitted));
 }
 
-export function mediaPassVisibility(cameraZ,panelZ){return smooth(-.5,6.5,cameraZ-panelZ);}
+export function mediaPassVisibility(cameraZ,panelZ){return smooth(4,11,cameraZ-panelZ);}
 
 // A fixed lens during media playback: live corner fitting caused visible zoom
 // pulses as a source approached, even though the panel itself was stationary.
