@@ -390,3 +390,9 @@ Added viewport-aspect staging: interpolate from ±2.6-unit offsets / .28 source 
 Added a shared critically damped tempo for film time and uploaded-video playbackRate. Changing the speed setting no longer immediately steps the velocity of the travelling camera/light. The clock analytically integrates the evolving rate, so equal elapsed time gives the same film time at 30/120 Hz. Pausing still stops immediately by explicit user action; hidden tabs do not advance film time. Initial saved speed is respected, and offline fixed-time captures remain independent of this real-time clock.
 
 52 tests/build pass, including speed continuity, frame-independent integration, bounded rate during acceleration/deceleration and no paused advancement. Portable Chromium passed idle/wake and timeline checks with ten slots and no errors. No hardware timing/codec benchmark performed. Scene geometry, stage, choreography and finale unchanged. Existing bundle warning remains.
+
+### Clean viewing mode
+
+Added a clean-view transport button and H shortcut. Header/footer fade away and become inert without changing playback, camera or render settings. Escape/H or the floating exit button restores chrome/focus; pointer activity reveals the exit affordance, which fades after 1.8 seconds unless hovered/keyboard-focused. Space still toggles playback in clean mode. Keyboard entry is guarded while dialogs/reference/settings or editable controls are active. Reduced-motion preferences suppress UI fades.
+
+52 unit tests/build pass. Portable Chromium checked button/keyboard entry, Escape/button exit, playback preservation, inert chrome restoration and dialog guard; ten slots/zero errors. Clean-view screenshot inspected. Browser test flag: `BROWSER_CINEMA=1`. Existing bundle-size warning remains.

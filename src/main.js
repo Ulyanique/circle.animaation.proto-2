@@ -1,3 +1,4 @@
+import { mountCinemaView } from './cinema-view.js';
 import { createPlaybackTempo } from './playback-tempo.js';
 import { smoothMotion as smooth, dampMotion } from './motion-easing.js';
 import * as THREE from 'three';
@@ -417,6 +418,7 @@ function render(t, dt=1/60){
 }
 function setPlaying(value){invalidateScene();playing=value;for(const panel of panels)panel.syncVideo(time,value,true);$('#play').textContent=playing?'Ⅱ':'▶';$('#play').setAttribute('aria-label',playing?'Пауза':'Воспроизвести');}
 setPlaying(playing);
+mountCinemaView({togglePlayback:()=>setPlaying(!playing)});
 $('#play').onclick=()=>setPlaying(!playing);
 
 function toggleChapters(open) {

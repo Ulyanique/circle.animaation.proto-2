@@ -56,6 +56,24 @@ try {
     await page.screenshot({path:join(artifacts,filename),timeout:120000});
     frames.push(filename);console.log('Captured',filename);
   }
+  if(process.env.BROWSER_CINEMA==='1'){
+    const playLabel=await page.locator('#play').getAttribute('aria-label');
+    await page.click('#cinema-toggle');
+    await page.waitForFunction(()=>document.querySelector('#app').classList.contains('cinema-view'));
+    if(!await page.locator('header').evaluate(element=>element.inert))errors.push('Cinema header not inert');
+    if(await page.locator('#play').getAttribute('aria-label')!==playLabel)errors.push('Cinema changed playback');
+    await page.waitForTimeout(500);
+    await page.screenshot({path:join(artifacts,'cinema-view.png'),timeout:120000});
+    await page.keyboard.press('Escape');
+    if(await page.locator('#app').evaluate(app=>app.classList.contains('cinema-view')))errors.push('Cinema Escape failed');
+    await page.keyboard.press('h');
+    await page.locator('#cinema-exit').click();
+    if(await page.locator('header').evaluate(element=>element.inert))errors.push('Cinema did not restore focusable chrome');
+    await page.click('#media-toggle');await page.keyboard.press('h');
+    if(await page.locator('#app').evaluate(app=>app.classList.contains('cinema-view')))errors.push('Cinema opened over dialog');
+    await page.click('#media-close');
+    console.log('Cinema: button/keyboard entry, Escape/touch-capable exit, playback preservation and dialog guard checked');
+  }
   if(process.env.BROWSER_RUNTIME==='1'){
     await page.waitForTimeout(1700);
     const before=await page.evaluate(()=>window.__drawCalls);
