@@ -32,7 +32,7 @@ export function travellingCameraPose(time, spacing, interval, firstPanelZ) {
   const envelope=intro*intro*intro*(10-15*intro+6*intro*intro);
   const x=(-8.3+.25*Math.sin(time*.12))*envelope;
   const y=-.65+.18*Math.sin(time*.15);
-  return [x,y,z,x*.36,.3+.07*Math.sin(time*.12),z-21,Math.sin(time*.12)*.004];
+  return [x,y,z,x,.3+.07*Math.sin(time*.12),z-21,Math.sin(time*.12)*.004];
 }
 
 
@@ -41,7 +41,7 @@ export function trailOpacity(fraction) {
 }
 
 export function lightBridgePoint(pose, index) {
-  return [pose[0]*.42+(index%2?1.2:-1.2),.65+Math.sin(index)*.55,pose[2]-14];
+  return [pose[0]+(index%2?1.2:-1.2),.65+Math.sin(index)*.55,pose[2]-14];
 }
 
 // Quintic Hermite flight: common velocity and zero acceleration at each authored knot.

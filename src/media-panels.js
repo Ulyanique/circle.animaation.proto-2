@@ -1,6 +1,7 @@
 import { smoothMotion } from './motion-easing.js';
 import * as THREE from 'three';
 import { videoTiming } from './video-timing.js';
+import { travellingCameraPose } from './choreography.js';
 import { revealTriangles } from './media-reveal.js';
 import { sectionedTriangles, assemblyProgress, sectionOffset, seamEndpoints, choosePresentation, sectionLayout } from './sectioned-media.js';
 import { mediaDimensions, SHOT_INTERVAL, PANEL_SPACING, FIRST_PANEL_Z } from './media-config.js';
@@ -16,7 +17,7 @@ export class MediaPanel extends THREE.Group {
     this.layoutOverride="auto";this.presentation="whole";this.sectioned=index===0;this.assembly=0;this.lastAssembly=-1;this.sectionSeams=[];
     this.sourceBlend = 1;
     this.width = 11.5; this.height = 6.47;
-    this.presentationScale=[1,.83,1.04,.9,.98,.8,1.02,.88,.95,1.02][index%10];
+    this.presentationScale=[1,.83,1.04,.9,.98,.8,1.02,.88,.95,1.02][index%10]*.68;
     this.frame = new THREE.Mesh(new THREE.BoxGeometry(), frameMaterial.clone());
     this.frame.material.transparent = true;
     this.frame.material.opacity = 0;
@@ -30,10 +31,14 @@ export class MediaPanel extends THREE.Group {
     this.back = new THREE.Mesh(new THREE.PlaneGeometry(),new THREE.MeshPhysicalMaterial({color:0x29251c,metalness:.85,roughness:.35,side:THREE.BackSide,transparent:true,opacity:0}));
     this.back.position.z=-.06;this.back.renderOrder=this.face.renderOrder;
     this.add(this.frame, this.face, this.back);
-    const placementX=[1.4,-1.8,.2,-.3,2,-2.2,1,-.9,.6,-1.4];
     const placementY=[.6,-.25,.4,1,-.55,.7,-.6,.2,1.2,-.15];
-    this.position.set(placementX[index%10],placementY[index%10],FIRST_PANEL_Z-index*PANEL_SPACING);
-    this.rotation.set(Math.sin(index*1.7)*.065, Math.sin(index*2.3+.5)*.19, Math.sin(index*1.9+.7)*.12);
+    const readingTime=7.2+index*SHOT_INTERVAL;
+    const viewer=travellingCameraPose(readingTime,PANEL_SPACING,SHOT_INTERVAL,FIRST_PANEL_Z);
+    const side=index%2===0?1:-1;
+    this.position.set(-8.3+side*4.8,placementY[index%10],FIRST_PANEL_Z-index*PANEL_SPACING);
+    // Static front-facing staging, authored at the reading moment. Never billboard
+    // during playback: the camera advances without turning the card in its wake.
+    this.lookAt(new THREE.Vector3(viewer[0],viewer[1],viewer[2]));
     this.setDimensions(16/9);
     this.version = 0;
   }

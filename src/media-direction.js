@@ -40,7 +40,10 @@ export function mediaAttentionWeight(weight,finish=0){return .45*weight*(1-finis
 // One authored gaze track, not ten on/off steering envelopes. Fixed forward
 // look distance also prevents the apparent dolly/perspective kick near a card.
 export function createMediaGaze(panels){
- const knots=panels.map((panel,i)=>[7.2+i*5,panel.position.x,panel.position.y]);
+ const knots=panels.map((panel,i)=>{
+  const partner=panels[i%2===0?Math.min(i+1,panels.length-1):i-1];
+  return [7.2+i*5,(panel.position.x+partner.position.x)/2,panel.position.y];
+ });
  if(!knots.length)return (time,pose,finish=0)=>[pose[3]*(1-finish),pose[4]*(1-finish),pose[5]];
  knots.unshift([0,...knots[0].slice(1)]);
  knots.push([70.58,...knots.at(-1).slice(1)]);

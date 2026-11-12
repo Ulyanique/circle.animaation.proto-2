@@ -657,3 +657,26 @@ test('entire camera run has bounded frame-to-frame rotation including finale set
  assert.ok(maxStep/h<.35,`angular speed exceeded 20 degrees/s at ${maxTime}: ${maxStep/h}`);
  for(const panel of panels){panel.traverse(object=>object.geometry?.dispose());panel.frame.material.dispose();panel.face.material.dispose();panel.back.material.dispose();}material.dispose();
 });
+
+test('cards alternate screen sides and face the viewer without tracking rotations',async()=>{
+ const {MediaPanel}=await import('../src/media-panels.js');
+ const {createMediaGaze}=await import('../src/media-direction.js');
+ const {travellingCameraPose}=await import('../src/choreography.js');
+ const {MeshPhysicalMaterial,PerspectiveCamera}=await import('three');
+ const material=new MeshPhysicalMaterial(),panels=Array.from({length:10},(_,i)=>new MediaPanel(i,material,null,null));
+ const gaze=createMediaGaze(panels),camera=new PerspectiveCamera(60,1.5,.1,320);
+ for(const panel of panels){
+  const t=7.2+panel.index*5,pose=travellingCameraPose(t,18,5,-30);
+  camera.position.fromArray(pose);camera.lookAt(...gaze(t,pose));camera.updateMatrixWorld();panel.updateMatrixWorld(true);
+  const projected=panel.position.clone().project(camera);
+  assert.ok(panel.index%2===0?projected.x>0:projected.x<0,'alternate in screen space');
+  const normal=new Vector3(0,0,1).applyQuaternion(panel.quaternion),toward=camera.position.clone().sub(panel.position).normalize();
+  assert.ok(normal.dot(toward)>.999,'front faces viewer at reading moment');
+  for(const x of [-panel.width/2,panel.width/2])for(const y of [-panel.height/2,panel.height/2]){
+   const corner=new Vector3(x,y,0).applyMatrix4(panel.matrixWorld).project(camera);
+   assert.ok(Math.abs(corner.x)<.98&&Math.abs(corner.y)<.85,'complete source fits reading composition');
+  }
+  panel.traverse(object=>object.geometry?.dispose());panel.frame.material.dispose();panel.face.material.dispose();panel.back.material.dispose();
+ }
+ material.dispose();
+});
