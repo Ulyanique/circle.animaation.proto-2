@@ -194,9 +194,12 @@ const tailPoint=new THREE.Vector3(),tailBefore=new THREE.Vector3(),tailAfter=new
 const headPoint=new THREE.Vector3(),flightVector=new THREE.Vector3(),flightBefore=new THREE.Vector3();
 const sparkPoint=new THREE.Vector3(),sparkBefore=new THREE.Vector3(),sparkDirection=new THREE.Vector3();
 function updateSnake(t) {
- const length=Math.min(2.15,Math.max(0,t-.4));
+ const headDistance=bakedSnakePath.distanceAt(t);
+ const available=Math.max(0,headDistance-bakedSnakePath.distanceAt(Math.min(t,Math.max(.4,t-2.15))));
+ // Soft length limit: no hard clamp/kink when a fast bridge stretches the trail.
+ const length=20*Math.tanh(available/20);
  for(let j=0;j<=ribbonSegments;j++){
-  const u=j/ribbonSegments, sampleTime=t-u*length;
+  const u=j/ribbonSegments, sampleTime=bakedSnakePath.timeAtDistance(headDistance-u*length);
   const point=snakePoint(sampleTime,tailPoint);
   tangent.copy(snakePoint(sampleTime+.012,tailAfter)).sub(snakePoint(sampleTime-.012,tailBefore)).normalize();
   transportNormal(tangent,normal,j===0);binormal.crossVectors(tangent,normal).normalize();

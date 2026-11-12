@@ -402,3 +402,9 @@ Added a clean-view transport button and H shortcut. Header/footer fade away and 
 Settings now includes “Сохранить кадр PNG”. It renders the current timestamp immediately before reading the postprocessed WebGL canvas, exporting only the scene (no DOM chrome) at the current render resolution. Export does not alter playback or quality and does not require preserveDrawingBuffer. PNG filenames include minutes/seconds/milliseconds. Null capture/CORS failures are reported, the button recovers after errors, and temporary object URLs are revoked after download starts.
 
 53 tests/build pass. Portable Chromium downloaded an actual PNG, verified its signature/native canvas dimensions and unchanged playback state; ten slots/zero errors. Exported image inspected: scene is present, with no settings/header/footer. Browser test flag: `BROWSER_FRAME=1`. Existing bundle warning remains.
+
+### Distance-sampled light tail
+
+Baked paths now include cumulative arc length and reversible distance/time lookup. Tail geometry is sampled uniformly in world distance instead of uniformly in flight time, giving curves more even segment density during fast bridges. A smooth tanh limiter caps the visible tail at 20 world units while retaining the existing 2.15-second age limit; unlike a hard clamp this does not introduce a kink as the cap engages. The leading ember's trajectory/timing, sparks, card staging and finale are unchanged.
+
+54 tests/build pass. Added monotonic/reversible arc-distance lookup and stationary-span finite-value tests. Desktop portable Chromium captured 7.2/10.2 seconds with ten slots/zero errors; bridge frame at 10.2 inspected. This is a geometry/composition check, not a hardware smoothness or FPS benchmark. Existing bundle warning remains.

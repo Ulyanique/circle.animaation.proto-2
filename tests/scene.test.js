@@ -756,3 +756,16 @@ test('frame export reports PNG failure and names the exact captured timestamp',a
  await assert.rejects(capturePng({toBlob(callback){callback(null);}}),/сохранить кадр/);
  await assert.rejects(capturePng({toBlob(){throw new Error('SecurityError');}}),/SecurityError/);
 });
+
+test('baked arc-length lookup is monotonic, reversible and safe on stationary spans',async()=>{
+ const {bakeLightPath}=await import('../src/animation-runtime.js');
+ const path=bakeLightPath([[0,0,0,0],[1,2,0,0],[2,10,3,-2],[4,11,3,-2]]);
+ let last=0;
+ for(let t=0;t<4;t+=.003){
+  const distance=path.distanceAt(t);assert.ok(distance>=last);last=distance;
+  assert.ok(Math.abs(path.timeAtDistance(distance)-t)<1e-9);
+ }
+ assert.equal(path.timeAtDistance(-1),0);assert.equal(path.timeAtDistance(1e6),4);
+ const still=bakeLightPath([[0,1,2,3],[1,1,2,3]]);
+ assert.ok(still.distanceAt(.5)<1e-10);assert.ok(Number.isFinite(still.timeAtDistance(0)));
+});
