@@ -1,3 +1,4 @@
+import { createPlaybackTempo } from './playback-tempo.js';
 import { smoothMotion as smooth, dampMotion } from './motion-easing.js';
 import * as THREE from 'three';
 import { mediaWarning } from './media-diagnostics.js';
@@ -294,6 +295,7 @@ const finalKey=new THREE.PointLight(0xffe4ac,0,20,2);finalKey.position.set(-3,3,
 const finalRim=new THREE.PointLight(0xb8c9ec,0,20,2);finalRim.position.set(5,1,FINALE.z+2);scene.add(finalRim);
 const clamp=THREE.MathUtils.clamp, lerp=THREE.MathUtils.lerp;
 let time=0,playing=!reducedMotion,last=performance.now();
+const playbackTempo=createPlaybackTempo(settings.speed);
 const pointer = new THREE.Vector2(), smoothedPointer = new THREE.Vector2(), pointerVelocity = new THREE.Vector2();
 let chapterMenuWasPlaying=false;
 window.addEventListener('pointermove', event => {
@@ -332,7 +334,7 @@ function render(t, dt=1/60){
   if(!settings.mediaReveal && panel.visible)panel.setVisibility(1,0,passVisibility);
   panel.frame.visible=settings.frames;
   panel.face.material.color.setHex(0xece9e2).multiplyScalar(settings.mediaBrightness);
-  if(panel.video)panel.video.playbackRate=settings.speed;
+  if(panel.video)panel.video.playbackRate=playbackTempo.rate;
   panel.syncVideo(t,playing&&settings.media);
   panel.getWorldPosition(focusPosition).applyMatrix4(camera.matrixWorldInverse);
   focusSubjects.push({depth:-focusPosition.z,revealTime:panel.revealTime});
@@ -441,7 +443,14 @@ window.addEventListener('resize',()=>{
  let changed=false;for(const panel of panels)changed=panel.setViewportAspect(innerWidth/innerHeight)||changed;
  if(changed)rebuildSnakePath();
  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);});
-renderer.setAnimationLoop(now=>{const dt=Math.min((now-last)/1000,.1);last=now;if(assetsReady&&playing&&!document.hidden){time+=dt*settings.speed;if(time>DURATION){if(settings.loop)time=0;else{time=DURATION;setPlaying(false);}}}if(renderGate.shouldRender(now,assetsReady&&(playing||panels.some(panel=>panel.sourceBlend<1)),document.hidden))render(time,dt);});
+renderer.setAnimationLoop(now=>{
+ const dt=Math.min((now-last)/1000,.1);last=now;
+ if(assetsReady&&!document.hidden){
+  time+=playbackTempo.step(dt,settings.speed,playing);
+  if(playing&&time>DURATION){if(settings.loop)time=0;else{time=DURATION;setPlaying(false);}}
+ }
+ if(renderGate.shouldRender(now,assetsReady&&(playing||panels.some(panel=>panel.sourceBlend<1)),document.hidden))render(time,dt);
+});
 
 
 let mediaWasPlaying=false;

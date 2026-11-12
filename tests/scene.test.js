@@ -731,3 +731,17 @@ test('portrait stage preserves alternating placement, full-image fit and camera 
  }
  material.dispose();
 });
+
+import { createPlaybackTempo } from '../src/playback-tempo.js';
+test('tempo changes ramp continuously with frame-independent film timing',()=>{
+ const run=fps=>{const tempo=createPlaybackTempo(1);let time=0;for(let i=0;i<fps*2;i++)time+=tempo.step(1/fps,2);return {time,rate:tempo.rate};};
+ const a=run(30),b=run(120);
+ assert.ok(Math.abs(a.time-b.time)<1e-11);assert.ok(Math.abs(a.rate-b.rate)<1e-11);
+ const tempo=createPlaybackTempo(1);assert.equal(tempo.step(0,2),0);assert.equal(tempo.rate,1);
+ tempo.step(1/60,2);assert.ok(tempo.rate>1&&tempo.rate<1.01);
+ for(let i=0;i<240;i++){
+  tempo.step(1/60,i<120?2:.25);
+  assert.ok(tempo.rate>=.25&&tempo.rate<=2);
+ }
+ assert.equal(tempo.step(.1,1,false),0,'pause cannot advance timeline');
+});

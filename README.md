@@ -384,3 +384,9 @@ Moved the primary front pass to the lower image margin (normalised y=-.43) with 
 Added viewport-aspect staging: interpolate from ±2.6-unit offsets / .28 source scale in portrait to the existing desktop ±4.8 / .68 composition. Each resize only rebuilds panel geometry/path when the fit actually changes; source aspect and chosen layouts remain intact, and static facing is reauthored for the new placement. Camera travel and finale stay unchanged. Portrait cards are deliberately smaller to preserve both screen containment and physical camera clearance; final readability still needs review with real media.
 
 51 tests/build pass. New test covers all ten portrait landscape sources fitting their reading view, camera clearance, unchanged-viewport no-op and return to desktop scale. Portable Chromium at 390×844 captured 7.2/12.2 seconds with ten slots/zero errors; after final size tuning 12.2 was recaptured. Initial 12.2 composition inspected. Existing bundle-size warning remains; no hardware FPS claims.
+
+### Smooth live playback-speed changes
+
+Added a shared critically damped tempo for film time and uploaded-video playbackRate. Changing the speed setting no longer immediately steps the velocity of the travelling camera/light. The clock analytically integrates the evolving rate, so equal elapsed time gives the same film time at 30/120 Hz. Pausing still stops immediately by explicit user action; hidden tabs do not advance film time. Initial saved speed is respected, and offline fixed-time captures remain independent of this real-time clock.
+
+52 tests/build pass, including speed continuity, frame-independent integration, bounded rate during acceleration/deceleration and no paused advancement. Portable Chromium passed idle/wake and timeline checks with ten slots and no errors. No hardware timing/codec benchmark performed. Scene geometry, stage, choreography and finale unchanged. Existing bundle warning remains.
