@@ -1,8 +1,8 @@
-// What the two tools of the dev server have in common on the page — the placement tool (placer.js, key E) and the
-// title tool (titler.js, key T): the look of their panels, their buttons in the player's bar, and the rule that one
-// of them is open at a time. Not part of the build.
+// What the tools of the dev server have in common on the page — the placement tool (placer.js, key E), the title
+// tool (titler.js, key T) and the video tool (exporter.js, key V): the look of their panels, their buttons in the
+// player's bar, and the rule that one of them is open at a time. Not part of the build.
 
-const P = ':is(#placer, #titler)', OPEN = '#hud :is(#placer-open, #titler-open)';
+const P = ':is(#placer, #titler, #exporter)', OPEN = '#hud :is(#placer-open, #titler-open, #exporter-open)';
 const CSS = `
 ${P} {
   position: absolute; top: 14px; right: 14px; width: 330px; max-width: calc(100% - 28px); max-height: calc(100% - 28px); overflow: auto;

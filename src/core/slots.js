@@ -117,7 +117,7 @@ export function registerSlot(name, range, primary, media, ask) {
   if (!media) return null;
   const cfg = media.cfg, aspect = media.width / media.height;
   r.kind = media.kind; r.src = cfg.src; r.cfg = cfg; r.shape = aspect;
-  if (media.video && !r.video) r.video = media.video;
+  if (media.video && !r.video) { r.video = media.video; r.fresh = media.fresh; }
   // `fixed`: the media covers the picture, not the window — the window is a cut-out over it and the camera's flight
   // does not move it (background-attachment: fixed, in CSS terms)
   r.fixed = cfg.fixed ?? FIXED[r.id] ?? false;
@@ -159,6 +159,15 @@ export function finishSlots(links = []) {
 
 const TAIL = 16;      // frames a shot may still be on screen past its own range (the dissolve into the next one)
 
+/** The moment of its video that a window shows at frame `f`, in seconds, and whether the video runs in a loop. */
+function videoTime(r, f) {
+  const dur = r.video.duration;
+  let t = (r.cfg.start ?? 0) + (Math.max(0, f - r.f0) / FPS) * (r.cfg.rate ?? 1);
+  const loop = r.cfg.loop !== false && Number.isFinite(dur) && dur > 0.2;
+  if (loop) t %= dur; else if (Number.isFinite(dur)) t = Math.min(t, Math.max(0, dur - 0.05));
+  return [t, loop];
+}
+
 /**
  * Keeps the videos on the film's clock. Called once per rendered frame. `speed`: how fast that clock runs against
  * the wall clock — 1, unless frames take over 100 ms (the film then slows down rather than skip, and so do the videos).
@@ -170,10 +179,8 @@ export function syncVideos(f, playing, speed = 1) {
     if (!el) continue;
     if (f < r.f0 - TAIL || f > r.f1 + TAIL) { if (!el.paused) el.pause(); continue; }      // its window is far away
     live = true;
-    const rate = r.cfg.rate ?? 1, dur = el.duration, start = r.cfg.start ?? 0;
-    let t = start + (Math.max(0, f - r.f0) / FPS) * rate;
-    const loop = r.cfg.loop !== false && Number.isFinite(dur) && dur > 0.2;
-    if (loop) t %= dur; else if (Number.isFinite(dur)) t = Math.min(t, Math.max(0, dur - 0.05));
+    const rate = r.cfg.rate ?? 1, dur = el.duration;
+    const [t, loop] = videoTime(r, f);
     let off = el.currentTime - t;
     if (loop) off -= Math.round(off / dur) * dur;
     if (playing && f >= r.f0) {
@@ -194,6 +201,94 @@ export function syncVideos(f, playing, speed = 1) {
     }
   }
   return live;
+}
+
+/** Files that state themselves how long each of their frames lasts: the MP4 family. (For a WebM the browser may guess.) */
+const statesLengths = (src) => /\.(mp4|m4v|mov)([?#].*)?$/i.test(src);
+
+/**
+ * Which picture a video element holds now: the time stamp of its frame and how long that frame lasts, in microseconds;
+ * NaN and 0 where the browser cannot say.
+ */
+function frameNow(el) {
+  try {
+    const frame = new VideoFrame(el), at = [frame.timestamp, frame.duration || 0];
+    frame.close();
+    return at;
+  } catch { return [NaN, 0]; }
+}
+
+/**
+ * For a film that is drawn frame by frame, not played (the dev server's video file, dev/filmFile.js): every video that
+ * frame `f` can show is put on its moment, and the promise resolves once those frames are decoded. `syncVideos` only
+ * asks for them — a paused video seeks in its own time, and the frame drawn meanwhile shows the old picture.
+ * `span`: how long the drawn frame stays on screen, in frames of the film (24 / the file's frame rate). The video is
+ * asked for the middle of that stretch, not for its first instant: a clip of the film's own frame rate changes its
+ * picture exactly there, and which of the two it would give is a matter of rounding — one frame twice, the next
+ * never. Resolves to the number of videos that had to move.
+ */
+export async function settleVideos(f, span = 1, patience = 5000) {
+  const moving = [];
+  for (const r of Object.values(registry)) {
+    const el = r.video;
+    if (!el || f < r.f0 - TAIL || f > r.f1 + TAIL) continue;
+    if (!el.paused) el.pause();
+    const [t] = videoTime(r, f + span / 2);
+    const there = () => !el.seeking && Math.abs(el.currentTime - t) < 1e-3;
+    if (there()) { r.fresh?.(); continue; }
+    // The picture in the element may be the one for that moment already — a file of more frames a second than the
+    // clip has: then there is nothing to wait for, and a seek (the browser decodes from the key frame before) is
+    // saved. The picture says when it starts and how long it lasts, and is taken at its word only
+    //   · in a file that states the length of each frame. A WebM need not: the browser then guesses, a millisecond
+    //     too long for every third frame of an even clip and tens of milliseconds for half the frames of an uneven
+    //     one (a recording made by a browser) — and a picture kept on such a claim is the frame before;
+    //   · if the element stands on that picture (within half a millisecond: the stamp is rounded);
+    //   · well inside the frame, a millisecond short of its end. Next to a border the browser is asked.
+    const [was, lasts] = frameNow(el), now = el.currentTime * 1e6, want = t * 1e6;
+    if (statesLengths(r.src) && !el.seeking && lasts > 0 && now > was - 500 && now < was + lasts + 500 && want > was - 1 && want < was + lasts - 1000) {
+      r.fresh?.();
+      window.__settleLog?.push([f, 'held', 0]);      // (tools/exporttest.mjs prints how the seeks ended)
+      continue;
+    }
+    moving.push(new Promise((resolve) => {
+      // `seeked` says that the video has arrived, and nearly always its new picture is in the element by then. Under
+      // load it now and then is not — for a moment the element still gives the old one (Chromium 153: about one seek
+      // in a hundred while the film is drawn by the software renderer). So the picture is asked what it is:
+      //   · another time stamp than before the seek — it is the new one;
+      //   · the same stamp — the same frame of the clip again, or the old one still: the browser's word that it has
+      //     shown a frame since the seek was asked for settles it (or, where that word never comes — a tab that is
+      //     not in front —, a tenth of a second).
+      const asked = performance.now();
+      let arrived = false, shown = false, timer = 0, call;
+      const done = (how) => {
+        clearTimeout(timer);
+        el.removeEventListener('seeked', seeked);
+        if (call !== undefined) el.cancelVideoFrameCallback(call);
+        r.fresh?.();      // the texture takes the picture with the next draw (three.js waits for the page to show it)
+        window.__settleLog?.push([f, how, +(performance.now() - asked).toFixed(1)]);
+        resolve();
+      };
+      const seeked = () => {
+        if (!there()) return;      // the end of an earlier seek, not of this one
+        arrived = true;
+        if (shown) return done('shown');
+        if (frameNow(el)[0] !== was) return done('changed');
+        clearTimeout(timer);
+        timer = setTimeout(done, 100, 'grace');
+      };
+      const presented = (now, meta) => {
+        call = undefined;
+        // (a frame shown before the seek was asked for may be reported only now: it does not count)
+        if (meta.presentationTime > asked + 0.3) { shown = true; if (arrived) done('shown late'); } else call = el.requestVideoFrameCallback(presented);
+      };
+      if (el.requestVideoFrameCallback) call = el.requestVideoFrameCallback(presented);
+      timer = setTimeout(done, patience, 'patience');      // a video that cannot get there must not hold the film for ever
+      el.addEventListener('seeked', seeked);
+      el.currentTime = t;
+    }));
+  }
+  await Promise.all(moving);
+  return moving.length;
 }
 
 /** The placement tool has saved this window's line: the file now says `cfg`. */

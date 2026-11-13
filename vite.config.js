@@ -62,6 +62,9 @@ export default defineConfig({
     port: 4173,
     allowedHosts: true,
   },
+  // dev server only: the video tool (key V) fetches mediabunny when it is opened for the first time. Prepared with
+  // the server's start — found only then, it would make the page load again under the open tool
+  optimizeDeps: { include: ['mediabunny'] },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1500,

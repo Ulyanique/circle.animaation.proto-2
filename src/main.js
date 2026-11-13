@@ -37,6 +37,7 @@ function pairFlares(link) {
 
 const HERO_FLARE = 0.5;      // strength of the lens flare on the hero light
 
+let holding = false;
 const player = {
   time: 0,
   playing: false,
@@ -48,6 +49,15 @@ const player = {
   audio: null,
   renders: 0,     // frames drawn so far (the checking tools read it)
   live: false,    // a video is showing in a window: the picture changes on its own
+  // Someone else draws the frames, at a size of its own (dev server: the video file): the loop below stands by.
+  // The moment the picture is given back it is laid out for the window again — at once, not by the loop, which is at
+  // rest while the tab is out of sight.
+  get hold() { return holding; },
+  set hold(on) {
+    const was = holding;
+    holding = !!on;
+    if (was && !holding) layout();
+  },
 
   shotAt(f) {
     const s = this.shots;
@@ -59,7 +69,9 @@ const player = {
   renderAt(f) {
     f = clamp(f, 1, LAST_FRAME);
     this.renders++;
-    this.live = syncVideos(f, this.playing, this.speed);      // videos in the windows run on the film's clock
+    // videos in the windows run on the film's clock; while someone draws the frames for a file, that one has put
+    // each of them on its frame already (settleVideos) and they are left alone
+    this.live = this.hold ? false : syncVideos(f, this.playing, this.speed);
     const shot = this.shotAt(f);
     if (shot !== this.current) {
       if (this.current) this.current.group.visible = false;
@@ -177,6 +189,7 @@ const MAX_PIXELS = 3072 * 1728;
 let quality = 1;
 let reserve = 0;      // dev server: this much of the window's right side is kept free of the film (setReserve)
 function layout() {
+  if (player.hold) return;      // (it is laid out again when the hold is over)
   const aspect = 16 / 9, boxW = window.innerWidth - reserve;
   const w = Math.min(boxW, window.innerHeight * aspect), h = w / aspect;
   let ratio = params.has('dpr') ? Number(params.get('dpr')) : Math.min(window.devicePixelRatio || 1, 3);
@@ -280,6 +293,13 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
   let shown = -1, seen = -1;     // the frame and the touch() count that were drawn last
   let left = 0, lateAt = 0;      // frames still to draw; when to draw the late one (0 = it is drawn)
   function tick(now) {
+    if (player.hold) {
+      // the picture is not this loop's for now (once it is given back, layout() has it drawn anew)
+      last = now;
+      syncHud();
+      if (!window.__manual) requestAnimationFrame(tick);
+      return;
+    }
     const raw = Math.max(0, (now - last) / 1000);
     const dt = Math.min(0.1, raw);
     last = now;
@@ -324,11 +344,13 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
   requestAnimationFrame(tick);
 
   // Dev server only: the placement tool (key E, or ?edit) — drag a picture inside its window and save its line —
-  // and the title tool (key T, or ?title) — type the caption, drop a logo, save src/brand.js
+  // the title tool (key T, or ?title) — type the caption, drop a logo, save src/brand.js — and the video tool
+  // (key V, or ?video) — the film as it stands, saved as a video file
   if (import.meta.env.DEV && !window.__manual) {
-    Promise.all([import('./dev/placer.js'), import('./dev/titler.js')]).then(([placer, titler]) => {
+    Promise.all([import('./dev/placer.js'), import('./dev/titler.js'), import('./dev/exporter.js')]).then(([placer, titler, exporter]) => {
       placer.startPlacer(player, params.has('edit'));
       titler.startTitler(player, stage, params.has('title'), setReserve);
+      exporter.startExporter(player, stage, params.has('video'));
     });
   }
 });

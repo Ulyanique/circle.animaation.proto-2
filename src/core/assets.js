@@ -85,7 +85,8 @@ function loadVideo(cfg) {
       t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
       t.anisotropy = 16;
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      t.userData.media = { kind: 'video', cfg, video: el, width: el.videoWidth, height: el.videoHeight };
+      // `fresh()`: the frame the video stands on is taken at the next draw (core/slots.js, settleVideos)
+      t.userData.media = { kind: 'video', cfg, video: el, width: el.videoWidth, height: el.videoHeight, fresh: () => { t.needsUpdate = true; } };
       resolve(t);
     };
     // a slow connection must not hold the film back for ever: with the size known the video is taken as it is and

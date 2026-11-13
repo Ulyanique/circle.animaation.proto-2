@@ -1,7 +1,7 @@
 // buildtest.mjs — what the build makes of src/brand.js. Builds the site twice into OUTDIR (the user's settings as they
 // are, then a test variant with a tagline, a picture for the emblem and a character the font lacks), checks what was
-// shipped — the page's name, the glyphs kept from the font, the font's licence — then serves the test build
-// (vite preview) and draws its title in headless Chromium: OUTDIR/built_f1100.png.
+// shipped — the page's name, the glyphs kept from the font, the font's licence, nothing of the dev server's tools —
+// then serves the test build (vite preview) and draws its title in headless Chromium: OUTDIR/built_f1100.png.
 //   node buildtest.mjs [OUTDIR]          (default /tmp/work/buildtest; about a minute)
 // The user's src/brand.js is put back afterwards and the test picture is removed from public/media/.
 import chromium from '@sparticuz/chromium';
@@ -25,11 +25,18 @@ const build = (dir) => {
   const r = spawnSync(vite, ['build', '--outDir', dir, '--emptyOutDir'], { cwd: repo, encoding: 'utf8' });
   return { code: r.status, log: (r.stdout || '') + (r.stderr || '') };
 };
+// What belongs to the dev server and must stay there: the tools' panels (placement, title, video file), the library
+// that packs the video file, and the part of the film's own code that only the video tool calls (core/slots.js,
+// settleVideos). Words that a minifier leaves as they are — and that three.js does not use itself (it has its own
+// VideoFrame and requestVideoFrameCallback).
+const DEV_ONLY = ['__placer', '__titler', '__exporter', 'Подгонка кадра', 'Сохранить видео', 'mediabunny', 'VideoEncoder', '__settleLog', 'shown late'];
 /** What a build shipped. */
 const shipped = (dir) => {
   const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
-  const js = fs.readdirSync(path.join(dir, 'assets')).filter((f) => f.endsWith('.js')).map((f) => fs.readFileSync(path.join(dir, 'assets', f), 'utf8')).join('\n');
+  const scripts = fs.readdirSync(path.join(dir, 'assets')).filter((f) => f.endsWith('.js'));
+  const js = scripts.map((f) => fs.readFileSync(path.join(dir, 'assets', f), 'utf8')).join('\n');
   return {
+    scripts: scripts.length, dev: DEV_ONLY.filter((mark) => js.includes(mark) || html.includes(mark)),
     tab: html.match(/<title>([^<]*)<\/title>/)[1], loading: html.match(/<div id="loading"[^>]*><span>([^<]*)</)[1],
     glyphs: (js.match(/x_min/g) || []).length,      // every glyph of the font file has one
     kB: +(Buffer.byteLength(js) / 1000).toFixed(2),
@@ -51,6 +58,7 @@ try {
   ok('… ships only the glyphs of the text', s.glyphs === titleChars(mine).length, `${s.glyphs} glyphs for «${mine.caption}${mine.tagline ? ` / ${mine.tagline}` : ''}» (${titleChars(mine).length} different characters); JS ${s.kB} kB`);
   ok('… names the page after the caption', s.loading === (mine.caption || mine.name) && s.tab === (mine.name || (mine.caption ? `${mine.caption} — three.js` : 'three.js')), `tab «${s.tab}»`);
   ok('… carries the font licence', s.licence);
+  ok('… carries nothing of the dev server\'s tools', s.dev.length === 0, s.dev.length ? `found: ${s.dev.join(', ')}` : `${s.scripts} script file(s), none of ${DEV_ONLY.length} marks in them`);
   ok('… says nothing about glyphs', !/no glyphs/.test(b.log));
   if (mine.caption === DEFAULT_CAPTION && !mine.tagline) ok('… and the placeholder leaves index.html\'s names as they were', fs.readFileSync(path.join(out, 'as_is/index.html'), 'utf8').includes('<title>Янтарный циркуль — three.js</title>'));
 

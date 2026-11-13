@@ -27,6 +27,7 @@ Nothing in `tools/` is needed to run or build the site. `bash tools/setup.sh` re
     node boxcheck.mjs; node slotinfo.mjs; node vsync.mjs     # window boxes, numbers of the README table, video clock
     node heroprobe.mjs 0.4                                   # the light as drawn, sub-frame steps
     node titleshot.mjs OUTDIR; node buildtest.mjs            # the final title with other settings; what the build ships (see The final title)
+    node exporttest.mjs OUTDIR                               # the video tool: files made by the page, read back by ffmpeg (see The film as a video file)
     node /home/user/circle.animaation.proto-2/tools/captiontest.mjs      # the title's text, no browser (from the repo: it needs three.js)
     cd /tmp/work && /tmp/tools/venv/bin/python /home/user/work/bin/<tool>.py …   # system python has no numpy
 
@@ -38,6 +39,10 @@ Full check (≈ 6 min; run it as a background process, and do not edit `src/` me
 `final_check` prints still frames (< 0.5 px/f) and pops (one-frame brightness jumps) per shot against the original
 (original: 0 still frames before the title, 4 pops at f71, 669, 944, 953). Contact sheets: `rsheet.py DIR F1,F2,.. COLS
 TILEW OUT.jpg`. Look at every sheet under a fresh file name.
+
+A change that must not touch the picture: render the commit before it the same way (`git stash` while the tree is
+dirty) and hold the two against each other — `python cmpdir.py /tmp/work/motion/BEFORE /tmp/work/motion/NAME` must say
+`1213 frames compared … frames that differ: 0`.
 
 ## Shots: from video to data
 
@@ -358,6 +363,138 @@ Any photo or video in any window. User-facing description: README, «Свои ф
     upload file removed asynchronously after the answer made "nothing is left behind" fail one run in three — the
     server now removes it first and answers after.
 
+## The film as a video file (`src/dev/exporter.js` + `src/dev/filmFile.js`)
+
+- **What it is.** Key V, `?video` or the button in the player's bar; dev server only (started in `main.js` next to the
+  other two tools, `panel.js` knows its ids). `filmFile.js` draws frames `from`…`to` into the page's own canvas at the
+  file's size, hands each to the browser's encoder (WebCodecs) through mediabunny's `CanvasSource` and resolves to a
+  Blob; `exporter.js` is the panel around it («Видеофайл»: size, rate, quality, format, sound; «Сохранить видео»,
+  «Проба: 3 секунды отсюда», «Стоп»; the download; `window.__exporter` for the checks). Nothing goes through the dev
+  server: no upload, no ffmpeg on the machine.
+- **Borrowing the page.** `player.hold` (main.js): while it is set the `tick` loop draws nothing, `layout()` does
+  nothing and `renderAt` leaves the videos alone. `filmFile` then calls `stage.resize(w, h, 1)` and puts the canvas's
+  CSS size back, so the page goes on showing the picture at its own size while the drawing buffer is the file's.
+  Clearing the flag lays the picture out for the window again **in the setter**, not in the loop: a tab that is not
+  seen has no loop, and a hold that began and ended between two of its turns was never noticed (the canvas stayed at
+  the file's size). The canvas is read in the task that drew it (`CanvasSource.add` makes its `VideoFrame` at once).
+- **Time.** File frame k is film frame `from + k·24/fps`; the film is drawn for any moment, so 30 and 60 frames a
+  second are that many different pictures. One turn of the event loop per frame, through a `MessageChannel` — a timer
+  would be held back to one a second in a tab that is not in front.
+- **Videos in the windows.** `settleVideos(f, span)` in `core/slots.js` puts every video that frame `f` can show on
+  its moment and resolves when the pictures are there. What "there" takes:
+  - the video is asked for the **middle** of the stretch the file's frame covers (`f + span/2`). Asked for its first
+    instant, a clip of the film's own frame rate sits exactly on the border of two of its frames, and which one the
+    browser gives is a matter of rounding: one frame twice, the next never;
+  - the picture in the element is asked what it is — `new VideoFrame(el)` gives the time stamp of the frame the
+    element holds and how long that frame lasts. If the moment asked for lies inside that frame, there is **no
+    seek** — `held`: a seek is not cheap (the browser decodes from the key frame before the moment, every time), and
+    a 60-frame file of a 24-frame clip asks for the same frame two or three times running. The frame is taken at its
+    word only (a) in the MP4 family (`statesLengths`), where the length of each frame is the file's own statement —
+    exact in every probe, uneven frames included; (b) if the element stands on that picture; (c) a millisecond
+    short of the frame's end — on a border the browser is asked. A WebM is always asked: see the traps;
+  - after a seek, `seeked` is not enough. Under load it now and then fires before the element gives the new picture
+    (Chromium 153, software rendering: one or two seeks in a hundred while the film is drawn; none in 300 seeks of an
+    idle page). Another stamp than before the seek is the new picture (`changed`); the same stamp is the same frame
+    of the clip again or the old picture still, and then `requestVideoFrameCallback` (a frame presented after the
+    seek was asked for: `shown`, `shown late`) settles it — or, where the browser presents nothing because the page
+    is not seen, 100 ms (`grace`); `patience` (5 s) is for a video that never gets there;
+  - the texture takes the picture with the next draw: `fresh()` of the slot (`needsUpdate`), because three.js's
+    `VideoTexture` waits for the page to show a frame.
+  `syncVideos` inside `renderAt` would move the videos again, hence the hold. `window.__settleLog` is a hook for
+  `exporttest` (how each call ended, in the words above); the build drops it together with `settleVideos`
+  (`buildtest` looks).
+- **Sound.** MP4: the AAC packets of `public/audio.m4a` are copied (`EncodedPacketSink` →
+  `EncodedAudioPacketSource`) — nothing is decoded, and Chromium has no AAC encoder anyway; a piece of the film
+  starts with a whole packet, up to 21 ms early. WebM: decoded and encoded as Opus, 192 kbit/s. A soundtrack that
+  cannot be read or encoded gives a silent file and a sentence in the panel, not a failure.
+- **File.** MP4 with `fastStart: 'reserve'`: the index at the head (`ftyp moov free mdat`) without holding the packets
+  twice; both tracks must then state `maximumPacketCount` (more packets than stated is an error — for the sound a
+  generous count). `BufferTarget`: the file is built in memory (doubling from 64 kB, 4 GB at most), hence the cap of
+  100 Mbit/s on the picture. A key frame every second. Colour: BT.709, video range, labelled.
+- **Bit rates.** `pictureBitrate`: 8 / 16 / 32 Mbit/s for 1920×1080 at 24, × (pixels / 1080p)^0.85 × (fps / 24)^0.5.
+  To these encoders the number is a ceiling, which is why the panel says «до ≈ N МБ»: H.264 at 640×360 never spent
+  more than ≈ 4.8 Mbit/s (asking for 10 or 20 gave the same file; so did `prefer-software` and constant mode); at
+  1920×1080 it spent 14.3 of 16 and 21.8 of 32; VP9 spent 5.7 of 16. H.264 takes no quantizer here («This specific
+  encoder configuration … is not supported»); VP9 and AV1 do — not used, one rule for both formats is simpler.
+- **When the graphics card gives up.** A lost context (`webglcontextlost` while the file is made), a drawing buffer
+  smaller than asked for (`gl.drawingBufferWidth`), `OUT_OF_MEMORY` / `INVALID_FRAMEBUFFER_OPERATION` after the first
+  frame (the context stays and the picture is black — only the error code tells): one message, «видеокарта не
+  справилась с таким размером кадра». The page gets its picture back before the tidying up, and that is given three
+  seconds at most.
+- **mediabunny** 1.65.2 (MPL-2.0; a devDependency, unmodified, not shipped — which is all that licence asks of an MIT
+  project). Fetched when the tool is opened for the first time (`import('mediabunny')` behind `canMake`).
+  `optimizeDeps.include` in `vite.config.js`: found only at that moment, vite would prepare it and load the page
+  anew under the open tool. `mp4-muxer` is deprecated in its favour.
+- **Measured** (headless Chromium 153: software GL, software encoders; PSNR against lossless renders of the same
+  frames, read back with `-sws_flags accurate_rnd+full_chroma_int`; 4:2:0 alone, without a codec, allows 45.8 dB):
+  - colour: 16 flat patches come back within 2 levels; sound: copied AAC identical sample for sample, Opus within
+    0.33 ms and 0.9987 alike;
+  - 640×360, quality 0 / 1 / 2: calm f100 40.0 / 40.5 / 41.0 dB (VP9 40.4 / 41.2 / 41.5), busy f570 33.2 / 35.1 /
+    36.3, the title f1100 38.7 / 38.8 / 38.8, the sparks after the flash f990–992 28–31. 1920×1080, f100: H.264
+    42.1 dB at quality 1, 42.4 at 2; VP9 42.7 at 1. H.264 smooths the grain; faint blocks on dark gradients at
+    640×360, barely any at 1080p;
+  - the whole film at 320×180: 6.71 MB of «до ≈ 6,7 МБ» (there the ceiling is reached), every 30th frame 35–41 dB,
+    f991 24.6 dB — the sparks are lines one pixel wide at that size, none where it was a frame before; still 5 dB
+    nearer to its own render than to its neighbours';
+  - speed: 0.14 s a frame at 320×180 (the film in 3 min), 0.42 s at 640×360, 3.5 s at 1920×1080 (70 min), 8.5 s at
+    2560×1440, 19 s at 3840×2160. The two largest sizes: two and three frames, the files are H.264 of that size and
+    their pictures the film drawn at that size (38.4 and 39.4 dB). A real graphics card was not measured, nor a
+    long file of a large size;
+  - the encoders are deterministic here: the same «проба» twice gives the same packets (the files differ in the 20
+    bytes of their dates) — also when one of the two is made with the window minimised;
+  - a clip in window w04, pictures 330–392 of the film: clips of 24 (MP4, WebM) and 30 frames a second in a 24-frame
+    file, both 24-frame clips in a 60-frame file, clips whose `start` puts every moment just past a border of their
+    frames, the page in sight and out of sight — the wrong frame of the clip in no picture, none left out or out of
+    order, in every run. How the calls ended, per file of 63 pictures: `changed` 47–57, `shown` 5–10, `shown late`
+    0–2, `held` 5–6 (MP4: the pictures before the window's first frame), slowest 9–41 ms. Per file of 158 pictures
+    (60 frames a second): MP4 `held` 81, `changed` 51, `shown` + `shown late` 26 — every fifth moment falls exactly
+    on a border of the clip's frames, and there the browser is asked; WebM `changed` 54, `shown` + `shown late` 92.
+    Out of sight the MP4 gives `held` 81, `changed` 57, `grace` 20: two seconds of waiting in 158 pictures.
+    `patience` never.
+- **Checks.** `exporttest.mjs [OUTDIR]` (headless, needs the dev server and `/tmp/tools/ffmpeg`; ≈ 9 min and 69
+  checks; `FULL=1` adds the whole film, ≈ 4 min and 5 checks; `HUGE=1` adds a few frames at 2560×1440 and
+  3840×2160, ≈ 3 min and 3 checks; `ONLY=panel,sample,…` for some of its parts — the list is in its header). Its files
+  are 320×180, one is 1280×720. It makes clips `public/media/_test_levels*` (every frame one flat grey, far from its
+  neighbours': a frame that is late cannot hide) and a `w04` line in `src/media.js`, and puts everything back, also
+  after a failure. Parts: the panel; a «проба» through the buttons and its download; «Стоп», and leaving the page
+  while a file is made (`beforeunload`: the browser asks only after a real click, so the file is started with one);
+  the graphics card giving up (a faked error code, `WEBGL_lose_context`); WebM; 30 and 60 frames; the bars; a file
+  larger than the page (and, with `HUGE=1`, the two largest sizes); a title typed in the title tool and not saved;
+  videos in a window (`videos`, and `offset`: moments just past the borders of the clip's frames); the page out of
+  sight (the window minimised through `Browser.setWindowBounds` — headless shell then reports `visibilityState: hidden`
+  and stops `requestAnimationFrame`, though it does not slow timers down as a real background tab does); a browser
+  that lacks an encoder (H.264, both, WebCodecs altogether, Opus; a soundtrack that answers 404) — each on a page
+  that is told so before its scripts run. `exportershot.mjs OUT.png [FRAME]` makes `docs/exporter.jpg` (scaled to
+  1600×900, JPEG quality 86, like the other two panels' pictures).
+- **Traps met on the way.**
+  - ffmpeg's default conversion to RGB darkens by about a level (R −0.8, G −1.5, B −0.7) — that was the reading back,
+    not the encoder: `-sws_flags accurate_rnd+full_chroma_int`.
+  - Headless Chromium without a UTF-8 locale names a download with a Cyrillic name `download`: launch with
+    `env: { LC_ALL: 'C.utf8' }`.
+  - A page that is open when `src/media.js` gets another file loads itself anew (`location.reload()` in
+    `slots.js`), and a `page.goto` across that ends in «Navigation timeout»: `about:blank` first, then the file.
+  - After a lost context has come back, the first change of the picture's size prints «WebGL: INVALID_OPERATION:
+    delete: object does not belong to this context» some 30 times: three.js frees buffers of the context that is
+    gone. With or without the video tool; harmless.
+  - In an `evaluate`, a bare `import('mediabunny')` does not resolve: `/node_modules/.vite/deps/mediabunny.js`.
+  - puppeteer gives up on any single question to the page after three minutes (`protocolTimeout`), whatever the
+    `timeout` of the `waitForFunction` that asked it — and says only «Waiting failed»; the reason is in
+    `error.cause`. The whole film takes about three minutes at 320×180: `exporttest` launches with
+    `protocolTimeout: 0`.
+  - In the title, neighbouring frames differ in little but grain, which the encoder smooths away: there a picture of
+    the file is as near to the next frame's render as to its own, and "nearer to another frame" says nothing.
+  - `VideoFrame.duration` of a `<video>`'s picture is the file's statement in an MP4 and a guess in a WebM. WebM
+    written by ffmpeg (stamps in whole milliseconds, one default length): every frame says 42 ms, though every third
+    lasts 41 — and where frames are uneven, 42 for frames that last 83. WebM written by a browser's `MediaRecorder`
+    (no lengths at all): a running average, 7–190 ms too long for half the frames. A picture kept "because it still
+    covers the moment" was then the frame before: with half a millisecond of tolerance past a frame's end, every
+    third picture of a WebM whose `start` put the moments 1 ms past the borders, and every second picture of such an
+    MP4 (0.2 ms past them) — one frame twice, the next never. `exporttest`, part `offset`, is that case.
+- **Not done.** Writing the file to disk as it grows (`showSaveFilePicker` + a stream target) instead of building it
+  in memory — the way past the memory limit for long 4K files; decoding the windows' clips with WebCodecs, frame
+  after frame, instead of seeking a `<video>` — exact by construction and without a decode from the key frame for
+  every picture; HEVC and AV1; a still frame as PNG.
+
 ## Dead ends (do not retry)
 
 - Hero planner: bounded least squares → wiggly path. Tail fixed in the shot's world → hairpins at cuts, collapse at
@@ -381,6 +518,13 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   capture tools must render, wait, render again (`slotshot.mjs`). A GLSL comment with a back-tick inside the shader's
   template string ends the string («Unexpected identifier»).
 
+- Video file: waiting for `seeked` alone before a frame is drawn → a stale picture now and then. Keeping the
+  element's picture for a WebM, or within half a millisecond past a frame's end, "because it still covers the
+  moment" → the frame before, in a regular pattern (the traps of that section). A flat PSNR floor for the whole
+  film → fails on the sparks after the flash at 320×180, where the encoder is at its ceiling; the test asks instead
+  that a picture be nearer to its own render than to its neighbours'. Laying the picture out again from the page's
+  loop after a file → never happens in a page that is not seen.
+
 ## Accepted differences
 
 s03 middle slower than the original; s14a a single turning plate instead of the spinning prism; stills (not live
@@ -394,3 +538,8 @@ that returns is at envelope ≤ 0.05 once the centre line is further out than th
 `new7` 0 / 0 (s13 re-routed round the face) · `new8` 0 / 0 (s05, s09, s10 re-routed round faces) · `new9` 0 / 0 (shade
 pass) · `new10` 0 / 0 (four stills rebuilt) · `new11` 0 / 0 (s10–s11b re-routed for the whole helmet face) · `new12` 0 / 0 (window slots, empty `media.js`:
 bit-identical to `new11`). Build 1,133 kB (gzip 363), boot 4–5 s on the dev server without console messages.
+
+Since then every change is held against a render of the commit before it (640×360, all 1213 frames, `cmpdir.py`):
+with the settings as committed, the title tool and the video tool left every frame as it was, pixel for pixel. Build
+with the video tool in the dev server: 1,142.89 kB (gzip 366) — 0.3 kB more than before it (`player.hold`, the
+slots' `fresh()`); the tool itself and mediabunny are not in it.
