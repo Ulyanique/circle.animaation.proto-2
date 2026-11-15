@@ -13,7 +13,7 @@ import { pageNames, titleSettings } from '../fx/titleSettings.js';
 import { VIDEO_H, FPS, LAST_FRAME, clamp, timeToFrame } from '../core/util.js';
 import { MAX_UPLOAD, safeName } from './mediaLine.js';
 import { EMBLEM_FILE, MAX_TEXT, brandBlock, brandEntries, tidyBrand } from './brandLine.js';
-import { addStyle, hudButton, megabytes, openTool, releaseKeys, tool, toolOpen } from './panel.js';
+import { addStyle, claim, hudButton, landed, megabytes, offerMusic, openTool, releaseKeys, tool, toolOpen } from './panel.js';
 
 const FROM = 963, DONE = 1060, STILL = 1100;      // the title's shot begins; both lines have come; the frame to judge it by
 const UNDER = 1.6;                                // above this the letters do not grow while something stands over them (fx/title.js)
@@ -160,7 +160,7 @@ export function startTitler(player, stage, openNow = false, reserve = () => {}) 
       data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(why(data.error || `ответ ${res.status}`));
     } catch (e) { return say(`Загрузить не удалось (${e.message}).`, true); }
-    await ask();
+    await Promise.all([ask(), landed(`media/${data.name}`)]);      // (the dev server needs a moment before it serves a new file)
     anew = true;      // a file of this name may have been shown before: it is read again
     const what = [data.replaced && 'заменил прежний файл с этим именем', more && 'из нескольких файлов взят первый'].filter(Boolean);
     edit({ emblem: `media/${data.name}` }, `${data.name} — эмблема титра${what.length ? ` (${what.join('; ')})` : ''}.`);
@@ -306,9 +306,10 @@ export function startTitler(player, stage, openNow = false, reserve = () => {}) 
   window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) panel.classList.remove('hot'); });
   window.addEventListener('drop', (e) => {
     panel.classList.remove('hot');
-    if (!carriesFile(e)) return;
+    if (!carriesFile(e) || !claim(e)) return;
     e.preventDefault();
     const files = e.dataTransfer.files;
+    if (files.length && offerMusic(files[0], files.length - 1)) return;      // music is no logo: the sound tool has it
     if (files.length) upload(files[0], files.length - 1);
   });
 

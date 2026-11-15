@@ -1,6 +1,6 @@
 // Video tool of the dev server — key V, or `?video` in the address. The film as it stands on the page — the photos and
-// videos in its windows (src/media.js), the title (src/brand.js, or what the title tool shows unsaved), the bars if
-// they are on (key B) — is saved as a video file:
+// videos in its windows (src/media.js), the title (src/brand.js, or what the title tool shows unsaved), the sound
+// (src/sound.js, or what the sound tool plays unsaved), the bars if they are on (key B) — is saved as a video file:
 //   · «Сохранить видео» draws every frame in its turn, at the size and frame rate chosen, and hands the file to the
 //     browser as a download; «Проба» does the same for three seconds from the frame on the screen;
 //   · while it works the film is not the user's: a veil lies over the page and only «Стоп» answers.
@@ -8,6 +8,8 @@
 // part of the build.
 
 import { FPS, LAST_FRAME, clamp, timeToFrame, touch } from '../core/util.js';
+import { OWN_SOUND } from '../core/soundSettings.js';
+import { SOUND } from '../core/soundtrack.js';
 import { TITLE } from '../fx/title.js';
 import { FORMATS, RATES, SIZES, canMake, filmFile, frameCount, pictureBitrate, soundBitrate } from './filmFile.js';
 import { addStyle, hudButton, megabytes, releaseKeys, tool, toolOpen } from './panel.js';
@@ -20,6 +22,7 @@ const DEFAULTS = { size: '1920x1080', fps: 24, level: 1, format: 'mp4', sound: t
 const CSS = `
 #exporter label.sl span { width: 112px; flex: none; }
 #exporter label.sl select { flex: 1; }
+#exporter label small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #exporter p.sum { color: #f1d79a; font-size: 12px; font-variant-numeric: tabular-nums; }
 #exporter .acts.main { margin-top: 8px; }
 #exporter .run { margin-top: 10px; }
@@ -44,7 +47,7 @@ const HTML = `
 <label class="sl"><span>кадров в секунду</span><select data-a="fps" aria-label="Кадров в секунду"></select></label>
 <label class="sl"><span>качество</span><select data-a="level" aria-label="Качество"></select></label>
 <label class="sl"><span>формат</span><select data-a="format" aria-label="Формат файла"></select></label>
-<label><input type="checkbox" data-a="sound"> со звуком</label>
+<label><input type="checkbox" data-a="sound"> <span>со звуком</span><small data-a="which"></small></label>
 </div>
 <p class="sum"></p>
 <div class="acts main"><button data-a="make">Сохранить видео</button><button data-a="sample" title="Три секунды с кадра, который сейчас на экране: посмотреть, каким выйдет файл">Проба: 3 секунды отсюда</button></div>
@@ -55,7 +58,7 @@ const HTML = `
 `;
 
 const NO_ENCODER = 'Этот браузер не кодирует видео сам (WebCodecs): нужен свежий Chrome или Edge, а страница — по адресу localhost или https.';
-const HINT = 'В файл попадает то, что показывает страница: свои фото и видео в окнах, титр, полосы 2,39:1 (клавиша B). Кадры рисуются по очереди, не в реальном времени: слабая видеокарта делает это дольше, но не хуже.';
+const HINT = 'В файл попадает то, что показывает страница: свои фото и видео в окнах, титр, своя музыка (клавиша S), полосы 2,39:1 (клавиша B). Кадры рисуются по очереди, не в реальном времени: слабая видеокарта делает это дольше, но не хуже.';
 
 const seconds = (s) => (s < 90 ? `${Math.max(1, Math.round(s))} с` : `${Math.round(s / 60)} мин`);
 const decimal = (x, digits = 1) => x.toFixed(digits).replace('.', ',');
@@ -66,6 +69,13 @@ function why(e) {
   if (/not supported in this environment|is not supported/i.test(text)) return 'браузер не кодирует видео с такими настройками — попробуйте другой формат или размер';
   if (/out of memory|allocation failed|exceeded maximum size/i.test(text)) return 'не хватило памяти — попробуйте размер или качество поменьше';
   return text;
+}
+/** Why a file that was to have sound has none: what filmFile.js says (`soundError`), in the page's language. */
+function noSound(error) {
+  if (!error) return 'звук для такого формата этот браузер не кодирует';
+  if (/^no sound in /.test(error)) return 'в файле музыки нет звука, который можно прочитать';
+  if (/^cannot decode /.test(error)) return 'музыку в таком формате этот браузер не читает — возьмите MP3 или M4A';
+  return `звуковая дорожка не прочиталась (${error})`;
 }
 /** A name for the file: the film's caption, the picture's size. */
 export function fileName(caption, { width, height, fps, ext }, sample = false) {
@@ -82,10 +92,10 @@ export function startExporter(player, stage, openNow = false) {
   stageEl.append(veil, panel);
   const TIP = 'Сохранить ролик как видео (V)';
   const opener = hudButton('exporter-open', TIP, 'Видеофайл: сохранить ролик как видео', ICON, () => setOpen(!open));
-  tool('exporter', () => setOpen(false));
+  tool('exporter', () => setOpen(false), false);      // (a file dropped while it is open goes where it would with no tool open)
   const $ = (q) => panel.querySelector(q);
   const el = {
-    size: $('[data-a=size]'), fps: $('[data-a=fps]'), level: $('[data-a=level]'), format: $('[data-a=format]'), sound: $('[data-a=sound]'),
+    size: $('[data-a=size]'), fps: $('[data-a=fps]'), level: $('[data-a=level]'), format: $('[data-a=format]'), sound: $('[data-a=sound]'), which: $('[data-a=which]'),
     sum: $('.sum'), make: $('[data-a=make]'), sample: $('[data-a=sample]'), run: $('.run'), bar: $('progress'), left: $('.run span'),
     stop: $('[data-a=stop]'), msg: $('.msg'), got: $('.got'), file: $('[data-a=file]'), hint: $('.hint'),
   };
@@ -159,7 +169,7 @@ export function startExporter(player, stage, openNow = false) {
       });
       const name = fileName(TITLE.caption, file, sample);
       result = { ...file, name, url: URL.createObjectURL(file.blob), bytes: file.blob.size, from, to };
-      const silent = !o.sound || file.sound ? '' : ` Файл без звука: ${file.soundError ? `звуковая дорожка не прочиталась (${file.soundError})` : 'звук для такого формата этот браузер не кодирует'}.`;
+      const silent = !o.sound || file.sound ? '' : ` Файл без звука: ${noSound(file.soundError)}.`;
       note = `Готово за ${seconds(file.took)}.${silent} Если загрузка не началась сама — нажмите на имя файла.`;
     } catch (e) {
       if (e?.name === 'AbortError') note = 'Остановлено — файла нет.';
@@ -193,6 +203,10 @@ export function startExporter(player, stage, openNow = false) {
     for (const o of el.format.options) o.disabled = support[o.value] === false;
     el.format.value = fmt ?? opt.format;
     for (const node of [el.size, el.fps, el.level, el.format, el.sound]) node.disabled = busy;
+    // which sound: said when it is not the film's own
+    const which = SOUND.src === OWN_SOUND ? '' : `· ${SOUND.src.split('/').pop()}`;
+    put(el.which, which);
+    el.which.title = which ? `Музыка ролика — ${SOUND.src}: её ставит инструмент «Звук» (S)` : '';
     const frames = frameCount(1, LAST_FRAME, opt.fps), length = frames / opt.fps;
     const bytes = ((bitrate() + (opt.sound ? soundBitrate(fmt ?? opt.format) : 0)) * length) / 8;
     // the encoder is asked for so many bits a second and may stay below: a ceiling, not a promise
@@ -260,7 +274,7 @@ export function startExporter(player, stage, openNow = false) {
     if (e.code !== 'KeyV' || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     setOpen(!open);
   });
-  // …and a file dropped onto the page then is not taken into a window
+  // …and a file dropped onto the page then is not taken into a window or for the music
   for (const type of ['dragover', 'drop']) {
     window.addEventListener(type, (e) => {
       if (!running) return;
@@ -269,6 +283,8 @@ export function startExporter(player, stage, openNow = false) {
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
     }, true);
   }
+  // another sound (src/sound.js was saved by hand): the panel names it
+  window.addEventListener('sound-shown', () => refresh());
   // a page that is closed in the middle takes the unfinished file with it: the browser asks first
   window.addEventListener('beforeunload', (e) => { if (running) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -282,7 +298,7 @@ export function startExporter(player, stage, openNow = false) {
     file: () => result,
     state: () => ({
       open, running: running ? { done: running.done, frames: running.frames, sample: running.sample } : null, options: { ...opt }, format: format(), support: { ...support },
-      note: el.msg.textContent, bad: el.msg.classList.contains('bad'), sum: el.sum.textContent, left: el.left.textContent,
+      note: el.msg.textContent, bad: el.msg.classList.contains('bad'), sum: el.sum.textContent, left: el.left.textContent, which: el.which.textContent,
       file: result ? { name: result.name, bytes: result.bytes, type: result.type, frames: result.frames, seconds: result.seconds, sound: result.sound, from: result.from, to: result.to } : null,
       veil: !veil.hidden, hold: !!player.hold,
     }),

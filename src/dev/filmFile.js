@@ -1,10 +1,15 @@
 // The film as a video file. Every frame is drawn in its turn — not in real time, so none is dropped and none comes
 // late — handed to the browser's own video encoder (WebCodecs) and packed, with the soundtrack, into an MP4 or a WebM.
 // The packing is done by mediabunny, which is fetched when the tool is opened for the first time.
+// The soundtrack is the one the page plays (src/sound.js, or what the sound tool holds unsaved): the film's own goes
+// into an MP4 as it is; music of one's own is put in its place, levelled and encoded anew.
 // The core of the dev server's video tool (dev/exporter.js). Not part of the build.
 
 import { FPS, LAST_FRAME } from '../core/util.js';
+import { urlOf } from '../core/assets.js';
 import { settleVideos } from '../core/slots.js';
+import { OWN_SOUND, gainAt, untouched } from '../core/soundSettings.js';
+import { SOUND } from '../core/soundtrack.js';
 
 /** What the file can be: the container, the picture's codec, and what the soundtrack becomes in it. */
 export const FORMATS = {
@@ -13,7 +18,8 @@ export const FORMATS = {
 };
 export const SIZES = [[1280, 720], [1920, 1080], [2560, 1440], [3840, 2160]];
 export const RATES = [24, 30, 60];
-const OPUS_BITRATE = 192000, AAC_BITRATE = 317000;      // what Opus is asked for; what public/audio.m4a holds
+const OPUS_BITRATE = 192000, AAC_BITRATE = 317000;      // what stereo Opus is asked for; what public/audio.m4a holds
+const ENCODED = { opus: OPUS_BITRATE / 2, aac: 128000 };      // bits per second and channel a soundtrack is encoded with
 const MOST = 1e8;      // bits per second: the file is put together in memory, and 50 s of this are 630 MB
 
 /**
@@ -26,8 +32,14 @@ export function pictureBitrate(width, height, fps, level = 1) {
   const base = [8e6, 16e6, 32e6][level] ?? 16e6;
   return Math.min(MOST, Math.round((base * ((width * height) / (1920 * 1080)) ** 0.85 * (fps / FPS) ** 0.5) / 1e5) * 1e5);
 }
-/** Bits per second of the soundtrack in a file of this format, about. */
-export const soundBitrate = (format) => (FORMATS[format]?.sound === 'aac' ? AAC_BITRATE : OPUS_BITRATE);
+/**
+ * Bits per second of the soundtrack in a file of this format, about: the film's own goes into an MP4 as it is;
+ * anything else is encoded, as stereo.
+ */
+export function soundBitrate(format, music = SOUND) {
+  const codec = FORMATS[format]?.sound ?? 'opus';
+  return codec === 'aac' && music.src === OWN_SOUND && untouched(music) ? AAC_BITRATE : ENCODED[codec] * 2;
+}
 
 /** How many frames a file of frames `from`…`to` of the film holds at `fps`. */
 export const frameCount = (from, to, fps) => Math.ceil(((to - from + 1) * fps) / FPS);
@@ -56,53 +68,128 @@ const LOST = 'the graphics card dropped the picture (WebGL context lost) — a s
 const SHORT = 'the graphics card could not draw a picture of this size (out of memory) — a smaller size may do';
 
 /**
- * The soundtrack between seconds `t0` and `t1` of the film, as a track for the file. `feed(until)` hands over what
- * sounds before second `until` of the file: sound and picture go into it side by side.
+ * Can sound be encoded like this? A browser without an AAC encoder of its own (Chrome has none on Linux) gets the one
+ * built from FFmpeg's, fetched when it is first needed.
  */
-async function openSound(mb, url, format, t0, t1) {
-  const res = await fetch(url);
+async function canEncode(mb, codec, config) {
+  if (await mb.canEncodeAudio(codec, config)) return true;
+  if (codec !== 'aac') return false;
+  try { (await import('@mediabunny/aac-encoder')).registerAacEncoder(); } catch { return false; }
+  return mb.canEncodeAudio(codec, config);
+}
+
+/**
+ * The soundtrack between seconds `t0` and `t1` of the film, as a track for the file. `music`: its settings
+ * (core/soundSettings.js). `feed(until)` hands over what sounds before second `until` of the file: sound and picture
+ * go into it side by side.
+ */
+async function openSound(mb, music, format, t0, t1) {
+  const url = urlOf(music.src), res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
   const input = new mb.Input({ source: new mb.BlobSource(await res.blob()), formats: mb.ALL_FORMATS });
-  const track = await input.getPrimaryAudioTrack();
-  if (!track) { input.dispose(); return null; }
-  if (FORMATS[format].sound === track.codec) {
-    // the soundtrack is in the file's own codec already (AAC into MP4): its packets go in as they are, nothing is
-    // decoded and encoded anew. The piece starts with a whole packet — up to 21 ms before `t0`.
+  let track = null;
+  try { track = await input.getPrimaryAudioTrack(); } catch { /* not a file the library reads */ }
+  if (!track) { input.dispose(); throw new Error(`no sound in ${music.src}`); }
+  const codec = FORMATS[format].sound;
+  if (codec === track.codec && untouched(music)) {
+    // The soundtrack is in the file's own codec already (AAC into an MP4, Opus into a WebM) and sounds as it is: its
+    // packets go in as they are, nothing is decoded and encoded anew. A decoder gets a moment right only if it has
+    // heard what came before, so the piece begins a little earlier than the picture — a packet of AAC, a few of
+    // Opus — and the file says how much of its sound is this run-up and is not played: an edit list in an MP4, the
+    // codec delay in a WebM (the library writes both from packets that begin before zero).
     const sink = new mb.EncodedPacketSink(track), source = new mb.EncodedAudioPacketSource(track.codec);
-    const meta = { decoderConfig: await track.getDecoderConfig() };
-    let packet = (await sink.getPacket(t0)) ?? (await sink.getFirstPacket()), sent = 0;
-    const first = packet?.timestamp ?? 0;
+    let packet = (await sink.getPacket(t0 - ((await track.getPreRollDuration()) ?? 0))) ?? (await sink.getFirstPacket()), sent = 0;
+    const first = packet?.timestamp ?? t0, config = { ...(await track.getDecoderConfig()) };
+    if (track.codec === 'opus' && config.description) {
+      // …and the Opus header has to name the same run-up (its «pre-skip»), or a browser will not play the track
+      const d = config.description, head = new Uint8Array(d.buffer ? d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) : d.slice(0));
+      if (head.length >= 12) new DataView(head.buffer).setUint16(10, Math.min(65535, Math.round(Math.max(0, t0 - first) * 48000)), true);
+      config.description = head;
+    }
+    const meta = { decoderConfig: config };
     return {
-      source, how: 'copied', most: Math.ceil(((t1 - first) * track.sampleRate) / 1024) + 8,      // packets, at most (AAC: 1024 samples each)
+      source, how: 'copied',
+      most: Math.ceil(((t1 - first) * track.sampleRate) / (track.codec === 'opus' ? 120 : 1024)) + 8,      // packets, at most (AAC: 1024 samples each)
       async feed(until) {
-        while (packet && packet.timestamp < t1 && packet.timestamp - first < until) {
-          await source.add(packet.clone({ timestamp: packet.timestamp - first }), sent++ ? undefined : meta);
+        while (packet && packet.timestamp < t1 && packet.timestamp - t0 < until) {
+          await source.add(packet.clone({ timestamp: packet.timestamp - t0 }), sent++ ? undefined : meta);
           packet = await sink.getNextPacket(packet);
         }
       },
       close() { input.dispose(); },
     };
   }
-  // otherwise it is decoded and encoded anew (Opus for a WebM)
-  if (!(await track.canDecode()) || !(await mb.canEncodeAudio(FORMATS[format].sound, { numberOfChannels: track.numberOfChannels, sampleRate: track.sampleRate, bitrate: OPUS_BITRATE }))) {
-    input.dispose();
-    return null;
+  // Otherwise it is decoded and encoded anew — Opus for a WebM, AAC for an MP4 — and on the way put in its place and
+  // levelled, sample by sample: the file's sound begins with the file and lasts as long as its picture, silent where
+  // the music has not come in yet or is over. AAC keeps the music's own rate where the encoder takes it (up to
+  // 48 kHz: not every player goes beyond); otherwise the sound is brought to 48 kHz. Opus is 48 kHz inside: the
+  // music is brought to it here — a browser's encoder does that too if left to it, but 0.7 ms late (tools/NOTES.md).
+  // More channels than two become two.
+  const rate = track.sampleRate, channels = track.numberOfChannels, wide = Math.min(2, channels);
+  const config = (sampleRate) => ({ numberOfChannels: wide, sampleRate, bitrate: ENCODED[codec] * wide });
+  if (!(await track.canDecode())) { input.dispose(); throw new Error(`cannot decode ${music.src} (${track.codec ?? 'an unknown codec'})`); }
+  let outRate = 0;
+  for (const r of codec === 'opus' || rate > 48000 ? [48000] : [rate, 48000]) if (!outRate && (await canEncode(mb, codec, config(r)))) outRate = r;
+  if (!outRate) { input.dispose(); return null; }      // the browser has no encoder for this: a file without sound
+  const transform = wide === channels && outRate === rate ? undefined : { numberOfChannels: wide, sampleRate: outRate };
+  const source = new mb.AudioSampleSource({ codec, quality: new mb.Quality({ bitrate: ENCODED[codec] * wide }), transform });
+  const first = Math.round((t0 + music.start) * rate);      // the music's sample that sounds at the file's first moment
+  const total = Math.round((t1 - t0) * rate);               // samples the file holds
+  const last = (t1 + music.start) * rate;                   // the music's sample the file ends before
+  // Vorbis: the first packet a decoder is given returns nothing, and what the second returns the library stamps with
+  // the first one's time — every sample then comes out that packet's length too early: 3 ms when the music is read
+  // from its beginning, 23 ms from its middle. Such music is always read from its beginning, where the packet is
+  // known and its length can be given back. (Reading what is skipped takes a moment, not minutes.)
+  const lead = last > 0 && track.codec === 'vorbis' ? await new mb.EncodedPacketSink(track).getFirstPacket() : null;
+  const samples = last > 0 ? new mb.AudioSampleSink(track).samples(lead ? undefined : Math.max(0, first / rate), last / rate) : null;
+  const level = music.volume !== 1 || music.fadeIn > 0 || music.fadeOut > 0;
+  // samples handed over; the decoded piece in hand, the music's sample it begins with and how many it holds
+  let done = 0, piece = null, at = 0, held = 0, over = !samples, shift = null;
+  /** The next decoded piece of the music. One that is over before the music's sample `want` is not kept. */
+  async function pull(want) {
+    const next = await samples.next();
+    piece = null;
+    if (next.done) { over = true; return; }
+    const sample = next.value;
+    // (a library that stamps the first piece with the second packet's time needs nothing given back)
+    shift ??= lead && Math.abs(sample.timestamp - lead.timestamp) < 0.5 / rate ? Math.round(lead.duration * rate) : 0;
+    at = Math.round(sample.timestamp * rate) + shift;
+    held = sample.numberOfFrames;
+    if (want < at + held) {
+      piece = new Float32Array(held * channels);
+      sample.copyTo(piece, { planeIndex: 0, format: 'f32' });
+    }
+    sample.close();
   }
-  const source = new mb.AudioSampleSource({ codec: FORMATS[format].sound, quality: new mb.Quality({ bitrate: OPUS_BITRATE }) });
-  const samples = new mb.AudioSampleSink(track).samples(t0, t1);
-  let next = null;
   return {
     source, how: 'encoded', most: Math.ceil((t1 - t0) * 134) + 64,      // packets, at most: none is shorter than 10 ms, and a third to spare
     async feed(until) {
-      next ??= await samples.next();
-      while (!next.done && next.value.timestamp - t0 < until) {
-        const sample = next.value;
-        if (sample.timestamp >= t0 - 1e-6) { sample.setTimestamp(Math.max(0, sample.timestamp - t0)); await source.add(sample); }
+      const target = Math.min(total, Math.ceil(until * rate));
+      while (done < target) {
+        const n = Math.min(target - done, 4800), data = new Float32Array(n * channels);      // (zeros: silence)
+        for (let k = 0; k < n;) {
+          const want = first + done + k;                                          // the music's sample that belongs here
+          if (want < 0) { k += Math.min(n - k, -want); continue; }                // the music has not come in yet
+          while (!over && (!piece || want >= at + held)) await pull(want);
+          if (!piece) break;                                                      // the music is over
+          if (want < at) { k += Math.min(n - k, at - want); continue; }           // a gap in the music file
+          const take = Math.min(n - k, at + held - want);
+          data.set(piece.subarray((want - at) * channels, (want - at + take) * channels), k * channels);
+          k += take;
+        }
+        if (level) {
+          for (let k = 0; k < n; k++) {
+            const g = gainAt(t0 + (done + k) / rate, music);
+            for (let c = 0; c < channels; c++) data[k * channels + c] *= g;
+          }
+        }
+        const sample = new mb.AudioSample({ data, format: 'f32', numberOfChannels: channels, sampleRate: rate, timestamp: done / rate });
+        await source.add(sample);
         sample.close();
-        next = await samples.next();
+        done += n;
       }
     },
-    async close() { try { if (next && !next.done) next.value.close(); await samples.return(); } catch { /* it is over anyway */ } input.dispose(); },
+    async close() { try { await samples?.return(); } catch { /* it is over anyway */ } input.dispose(); },
   };
 }
 
@@ -113,13 +200,16 @@ async function openSound(mb, url, format, t0, t1) {
  *   format          'mp4' | 'webm'
  *   bitrate         bits per second for the picture
  *   sound           false: a silent file
+ *   music           the soundtrack's settings (core/soundSettings.js); by default those the page plays with
  *   signal          an AbortSignal: «Стоп»
  *   onProgress      (framesDone, framesInAll, filmFrame) after every frame
  * While it works, `player.hold` is set: the page's own loop (main.js) draws nothing and lays nothing out; when the
  * flag is cleared, the picture is back at the window's size.
- * Resolves to { blob, type, ext, frames, seconds, width, height, fps, bitrate, sound: 'copied' | 'encoded' | null, took }.
+ * Resolves to { blob, type, ext, frames, seconds, width, height, fps, bitrate, sound, soundError, took }. `sound`:
+ * 'copied' | 'encoded' | null — null: the file has no sound, because none was asked for, because the browser cannot
+ * encode it (soundError null), or because the music could not be read (soundError says why).
  */
-export async function filmFile(player, stage, { width, height, fps = FPS, format = 'mp4', bitrate, sound = true, from = 1, to = LAST_FRAME, signal, onProgress } = {}) {
+export async function filmFile(player, stage, { width, height, fps = FPS, format = 'mp4', bitrate, sound = true, music = SOUND, from = 1, to = LAST_FRAME, signal, onProgress } = {}) {
   const kind = FORMATS[format];
   if (!kind) throw new Error(`unknown format ${format}`);
   if (!(width > 0 && height > 0) || width % 2 || height % 2 || Math.abs(width * 9 - height * 16) > 16) throw new Error(`the picture is 16:9 with even sides, not ${width}×${height}`);
@@ -140,8 +230,8 @@ export async function filmFile(player, stage, { width, height, fps = FPS, format
   const picture = new mb.CanvasSource(canvas, { codec: kind.codec, quality: new mb.Quality({ bitrate }), keyFrameInterval: 1, latencyMode: 'quality' });
   output.addVideoTrack(picture, { frameRate: fps, maximumPacketCount: frames + 8 });
   let track = null, soundError = null;
-  if (sound && player.audio?.src) {
-    try { track = await openSound(mb, player.audio.src, format, t0, t1); } catch (e) { soundError = e; }
+  if (sound) {
+    try { track = await openSound(mb, music, format, t0, t1); } catch (e) { soundError = e; }
     if (track) output.addAudioTrack(track.source, { maximumPacketCount: track.most });
   }
 

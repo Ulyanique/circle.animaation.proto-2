@@ -4,6 +4,7 @@ import { Stage } from './core/stage.js';
 import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame, touch, touched } from './core/util.js';
 import { loadAssets, restorePhotos } from './core/assets.js';
 import { syncVideos, finishSlots } from './core/slots.js';
+import { soundtrack } from './core/soundtrack.js';
 import { buildShots, linkShots, FOOTAGE } from './shots/index.js';
 import { makeHero } from './fx/hero.js';
 import { TITLE } from './fx/title.js';
@@ -46,7 +47,7 @@ const player = {
   shots: [],
   links: [],
   current: null,
-  audio: null,
+  get audio() { return soundtrack.el; },      // the soundtrack's <audio> element (core/soundtrack.js)
   renders: 0,     // frames drawn so far (the checking tools read it)
   live: false,    // a video is showing in a window: the picture changes on its own
   // Someone else draws the frames, at a size of its own (dev server: the video file): the loop below stands by.
@@ -132,20 +133,20 @@ const player = {
 
   seek(t) {
     this.time = clamp(t, 0, DURATION);
-    if (this.audio) this.audio.currentTime = this.time;
+    soundtrack.seek(this.time);
     rememberFrame();
   },
 
   play() {
     if (this.time >= DURATION - 1e-3) this.seek(0);
     this.playing = true;
-    if (this.audio && this.sound) { this.audio.currentTime = this.time; this.audio.play().catch(() => {}); }
+    soundtrack.play(this.time);
     rememberFrame();
   },
 
   pause() {
     this.playing = false;
-    this.audio?.pause();
+    soundtrack.pause();
     rememberFrame();
   },
 
@@ -156,10 +157,7 @@ const player = {
 
   setSound(on) {
     this.sound = on;
-    if (!this.audio) return;
-    this.audio.muted = !on;
-    if (on && this.playing) { this.audio.currentTime = this.time; this.audio.play().catch(() => {}); }
-    if (!on) this.audio.pause();
+    soundtrack.setOn(on, this.time);
   },
 };
 window.__player = player;
@@ -250,8 +248,7 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
   player.links = linkShots(player.shots);
   finishSlots(player.links);      // what each window shows of itself is known only now, with the flights linked
   for (const s of player.shots) stage.scene.add(s.group);
-  player.audio = assets.audio;
-  if (player.audio) player.audio.preservesPitch = false;      // tiny rate trims must not go through a time-stretcher
+  soundtrack.open(() => player.time);      // muted until the user turns the sound on
 
   // Warm-up behind the loading screen: compile every shader, upload every texture and draw every shot once.
   // Otherwise the first frame of each shot stalls for a moment and the flight visibly hitches at every cut.
@@ -281,14 +278,14 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
   // The picture always advances by the display's own frame time (requestAnimationFrame), which is perfectly
   // even. The soundtrack follows the picture: HTMLMediaElement.currentTime only updates in coarse, uneven
   // steps, so driving the camera from it makes the motion judder. Small drift is trimmed with an inaudible
-  // playback-rate change; a big one (tab was in the background, audio stalled) is fixed with one jump.
+  // playback-rate change; a big one (tab was in the background, audio stalled) is fixed with one jump
+  // (core/soundtrack.js: follow).
   //
   // A paused film is a still picture, and pictures are placed in their windows with the film paused, for minutes on
   // end: drawing it at the display's rate all that time would keep the GPU — and a laptop's fan — busy for nothing.
   // So a paused film is drawn when something has changed (the frame, or anything that calls touch()): three frames,
   // and one more a moment later for whatever arrives late. A video showing in a window keeps it drawing.
   let last = performance.now();
-  let drift = 0;                 // smoothed (audio - picture), s
   let slow = 0, fastFrames = 0;  // frame-time governor state
   let shown = -1, seen = -1;     // the frame and the touch() count that were drawn last
   let left = 0, lateAt = 0;      // frames still to draw; when to draw the late one (0 = it is drawn)
@@ -306,17 +303,8 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
     if (player.playing) {
       player.time += dt;
       player.speed += ((raw > 0 ? dt / raw : 1) - player.speed) * (1 - Math.exp(-raw / 0.3));
-      const a = player.audio;
-      if (a && player.sound && !a.paused && a.readyState >= 2 && !a.seeking) {
-        const d = a.currentTime - player.time;
-        if (d > 0.3) { player.time = a.currentTime; drift = 0; }                 // picture fell behind: catch up
-        else if (d < -0.3) { a.currentTime = player.time; drift = 0; }           // sound fell behind: pull it forward
-        else {
-          drift += (d - drift) * 0.04;
-          const rate = Math.abs(drift) < 0.04 ? 1 : drift > 0 ? 0.985 : 1.015;
-          if (a.playbackRate !== rate) a.playbackRate = rate;
-        }
-      }
+      const ahead = soundtrack.follow(player.time);
+      if (ahead !== null) player.time = ahead;      // the picture fell behind the sound: it catches up
       if (player.time >= DURATION) { player.time = DURATION; player.pause(); showHud(); }
 
       // frame-time governor: if the GPU cannot keep up (frames well over 16.7 ms for about a second), drop the
@@ -344,12 +332,14 @@ loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image 
   requestAnimationFrame(tick);
 
   // Dev server only: the placement tool (key E, or ?edit) — drag a picture inside its window and save its line —
-  // the title tool (key T, or ?title) — type the caption, drop a logo, save src/brand.js — and the video tool
-  // (key V, or ?video) — the film as it stands, saved as a video file
+  // the title tool (key T, or ?title) — type the caption, drop a logo, save src/brand.js — the sound tool (key S, or
+  // ?sound) — music of one's own, laid under the film — and the video tool (key V, or ?video) — the film as it
+  // stands, saved as a video file
   if (import.meta.env.DEV && !window.__manual) {
-    Promise.all([import('./dev/placer.js'), import('./dev/titler.js'), import('./dev/exporter.js')]).then(([placer, titler, exporter]) => {
+    Promise.all([import('./dev/placer.js'), import('./dev/titler.js'), import('./dev/sounder.js'), import('./dev/exporter.js')]).then(([placer, titler, sounder, exporter]) => {
       placer.startPlacer(player, params.has('edit'));
       titler.startTitler(player, stage, params.has('title'), setReserve);
+      sounder.startSounder(player, params.has('sound'));
       exporter.startExporter(player, stage, params.has('video'));
     });
   }

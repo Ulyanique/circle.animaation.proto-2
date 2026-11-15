@@ -9,7 +9,7 @@
 import { slots, placeAt, setFixed, fitParts, fixedByDefault, mediaFor, adoptSettings, CARD } from '../core/slots.js';
 import { VIDEO_W, VIDEO_H, FPS, LAST_FRAME, clamp, lerp, timeToFrame, touch } from '../core/util.js';
 import { MAX_UPLOAD, mediaLine, safeName } from './mediaLine.js';
-import { addStyle, hudButton, megabytes, openTool, releaseKeys, tool, toolOpen } from './panel.js';
+import { addStyle, audioDragged, claim, dropTool, hudButton, landed, megabytes, offerMusic, releaseKeys, tool, toolOpen } from './panel.js';
 
 const MAX_SIDE = 4096;      // longer side a photo keeps: the film puts no more than that on the GPU (core/assets.js)
 const ZOOM_SLIDER = 4;      // the slider's right end (the wheel goes on to 8)
@@ -234,7 +234,8 @@ export function startPlacer(player, openNow = false) {
     let name = safeName(file.name);
     if (!name) {
       return say(/\.hei[cf]$/i.test(file.name) ? 'HEIC браузеры не показывают — сохраните фото как JPEG.'
-        : `«${file.name}» в окно не поставить: нужны jpg, png, webp, avif или mp4, webm.`, true);
+        : /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac)$/i.test(file.name) ? `«${file.name}» — это музыка: для неё инструмент «Звук», клавиша S.`
+          : `«${file.name}» в окно не поставить: нужны jpg, png, webp, avif или mp4, webm.`, true);
     }
     player.pause();
     say(`Загружаю ${name}…`);
@@ -251,6 +252,7 @@ export function startPlacer(player, openNow = false) {
       if (data.replaced) what.push('заменил прежний файл с этим именем');
     } catch (e) { return say(`Загрузить не удалось (${e.message}).`, true); }
     if (more) what.push('из нескольких файлов взят первый');
+    await landed(`media/${name}`);      // (the dev server needs a moment before it serves a new file)
     await assign(r, `media/${name}`, `${name} — в окне ${r.id}${what.length ? ` (${what.join('; ')})` : ''}.`, true);
   }
 
@@ -451,8 +453,9 @@ export function startPlacer(player, openNow = false) {
   });
 
   // ---- a file dropped from the computer -----------------------------------------------------------
-  // (with the title tool open, a dropped file is a logo for the title: titler.js)
-  const carriesFile = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files') && (openTool() || 'placer') === 'placer';
+  // (with the title tool open, a dropped file is a logo for the title: titler.js; a sound file is music for the film,
+  // unless this tool is the one that is open: sounder.js)
+  const carriesFile = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files') && (dropTool() === 'placer' || (!dropTool() && !audioDragged(e)));
   window.addEventListener('dragover', (e) => {
     if (!carriesFile(e)) return;
     e.preventDefault();      // or the browser would open the file in place of the page
@@ -463,10 +466,11 @@ export function startPlacer(player, openNow = false) {
   });
   window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) hot = null; });
   window.addEventListener('drop', (e) => {
-    if (!carriesFile(e)) return;
+    if (!carriesFile(e) || !claim(e)) return;
     e.preventDefault();
     hot = null;
     const [x, y] = toVideo(e), r = pick(x, y) || (sel && slots[sel]), files = e.dataTransfer.files;
+    if (files.length && offerMusic(files[0], files.length - 1)) return;      // music is not for a window: the sound tool has it
     if (!files.length || !r) return;
     select(r.name);
     upload(files[0], r, files.length - 1);

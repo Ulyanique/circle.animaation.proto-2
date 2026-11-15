@@ -1,13 +1,13 @@
-// Asset loading: what the windows show (placeholder stills, or the photos / videos chosen in src/media.js), the
-// picture that stands for the emblem of the final title (src/brand.js) and the soundtrack.
+// Asset loading: what the windows show (placeholder stills, or the photos / videos chosen in src/media.js) and the
+// picture that stands for the emblem of the final title (src/brand.js). (The soundtrack: core/soundtrack.js.)
 
 import * as THREE from 'three';
 import { mediaFor, isVideo, CARD } from './slots.js';
 
 const base = import.meta.env.BASE_URL;
 const MAX_SIDE = 4096;      // longer side of a photo on the GPU (every WebGL 2 device takes it; 50 MB with its mip-maps)
-/** `src` of media.js -> address: a file under public/, or a full address (its server must allow cross-origin use). */
-const urlOf = (src) => (/^([a-z][a-z0-9+.-]*:)?\/\//i.test(src) ? src : base + src.replace(/^\.?\//, ''));
+/** `src` of media.js or sound.js -> address: a file under public/, or a full address (its server must allow cross-origin use). */
+export const urlOf = (src) => (/^([a-z][a-z0-9+.-]*:)?\/\//i.test(src) ? src : base + src.replace(/^\.?\//, ''));
 
 // Own photos reach the GPU through a 2D canvas, which makes every browser show the same picture:
 //   · in sRGB — three.js asks WebGL to take pixel values as they are, so a photo tagged Display P3 (phones) or
@@ -248,9 +248,5 @@ export async function loadAssets(names, toGpu = null, { emblem = null } = {}) {
     const own = !cfg ? null : CARD ? makeCard(cfg) : await (isVideo(cfg.src) ? loadVideo(cfg) : loadPhoto(loader, cfg));
     footage[n] = own || await loadTexture(loader, `${base}footage/${n}.jpg`);
   }));
-  // soundtrack of the original video; the player keeps it muted until the user turns the sound on
-  const audio = new Audio(`${base}audio.m4a`);
-  audio.preload = 'auto';
-  audio.muted = true;
-  return { footage, audio, emblem: await picture };
+  return { footage, emblem: await picture };
 }

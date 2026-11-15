@@ -1,9 +1,11 @@
 // exporttest.mjs [OUTDIR] — the video tool of the dev server (src/dev/exporter.js + filmFile.js; key V on the page):
 // does the page make the file it promises? Headless Chromium against the dev server; ffmpeg reads the files back.
-//   cd /tmp/tools && node exporttest.mjs /tmp/work/exporttest          (≈ 9 min; FULL=1 adds the whole film, ≈ 4 min)
-//   env: URL (http://localhost:5173), REPO, FFMPEG (/tmp/tools/ffmpeg); ONLY=panel,sample,stop,lost,webm,rates,bars,
-//   large,huge,title,videos,offset,hidden,refuse,full — some of its parts; HUGE=1 adds the part `huge` (five frames
-//   at 2560×1440 and 3840×2160, ≈ 3 min)
+//   cd /tmp/tools && node exporttest.mjs /tmp/work/exporttest          (≈ 12 min and 99 checks; FULL=1, whole film:
+//                                                                        ONLY=music FULL=1 adds 3 and ≈ 7 min)
+//   env: URL (http://localhost:5173), REPO, FFMPEG (/tmp/tools/ffmpeg), SOUNDS (/tmp/work/sound/files: the test
+//   sounds of tools/soundtest.py); ONLY=panel,sample,stop,lost,webm,music,rates,bars,large,huge,title,videos,offset,
+//   hidden,refuse,full — some of its parts; HUGE=1 adds the part `huge` (five frames at 2560×1440 and 3840×2160,
+//   ≈ 3 min)
 // It makes its own test clips (public/media/_test_*), writes its own line into src/media.js for the part about videos
 // in the windows and, when it is done or has failed, puts src/media.js back as it found it and removes the clips.
 // Checks: the panel (keys, the other tools, what is remembered); a «проба» through the real buttons and its download;
@@ -11,7 +13,8 @@
 // a title that is typed and not saved; MP4 and WebM read back — streams, frame counts, every frame against a lossless
 // render of the same frame of the film, the sound against public/audio.m4a; 30 and 60 frames per second; a file
 // larger than the page; the bars; videos in a window, frame by frame; the same with the page out of sight; a browser
-// that lacks an encoder. The files stay in OUTDIR.
+// that lacks an encoder; music of one's own (src/sound.js, the sound tool) — where it lies in the file, to a tenth of
+// a millisecond, and how loud, for every kind of music file and both kinds of video file. The files stay in OUTDIR.
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
@@ -21,6 +24,7 @@ const REPO = process.env.REPO || '/home/user/circle.animaation.proto-2';
 const HOST = process.env.URL || 'http://localhost:5173';
 const FFMPEG = process.env.FFMPEG || '/tmp/tools/ffmpeg';
 const OUT = process.argv[2] || '/tmp/work/exporttest';
+const SOUNDS = process.env.SOUNDS || '/tmp/work/sound/files';
 const SETTINGS = `${REPO}/src/media.js`, MEDIA = `${REPO}/public/media`, SOUND = `${REPO}/public/audio.m4a`;
 const W = 320, H = 180;      // the size of the test files: small, so that the software renderer keeps up
 const original = fs.readFileSync(SETTINGS, 'utf8'), hadFiles = new Set(fs.readdirSync(MEDIA));
@@ -110,6 +114,36 @@ function sameSound(a, b, lag, skip = 0) {
   for (let i = skip * 2; i < a.length && i + lag * 2 < b.length; i++, n++) if (a[i] !== b[i + lag * 2]) differ++;
   return { differ, n };
 }
+// ---- the test music (tools/soundtest.py): a quiet tone, 440 Hz at 0.1 in the left channel, and clicks — one cycle of
+// 2 kHz, 0.9 high — at seconds 0.5, 1, 2.25, 5, 12, 19, 30, 45 and 60 of it
+const TONE = 0.1 / Math.SQRT2, FILM_END = 1213 / 24;
+/** A click expected at second `at` of a file's sound: how high it stands, and how far from its place, ms. */
+function clickAt(sound, at) {
+  const i = Math.round(at * 48000), lo = Math.max(0, i - 2400), hi = Math.min(sound.length / 2, i + 2400);
+  let best = lo, peak = -1;
+  for (let k = lo; k < hi; k++) if (sound[2 * k] > peak) { peak = sound[2 * k]; best = k; }
+  return { peak: peak / 32768, off: (best / 48000 - at - 1 / 8000) * 1000 };      // (the crest of the cycle is 1/8000 s after its beginning)
+}
+/** The level of the left channel between two seconds of a file's sound: the root of its mean square. */
+function levelOf(sound, t0, t1) {
+  let sum = 0, n = 0;
+  for (let k = Math.round(t0 * 48000); k < Math.round(t1 * 48000) && 2 * k < sound.length; k++, n++) sum += (sound[2 * k] / 32768) ** 2;
+  return n ? Math.sqrt(sum / n) : 0;
+}
+/** How loud the settings of src/sound.js make the music at second `t` of the film (src/core/soundSettings.js: gainAt). */
+function gainAt(t, s) {
+  let g = s.volume ?? 1;
+  if (s.fadeIn > 0) g *= Math.min(1, Math.max(0, t / s.fadeIn)) ** 2;
+  if (s.fadeOut > 0) g *= Math.min(1, Math.max(0, (FILM_END - t) / s.fadeOut)) ** 2;
+  return g;
+}
+/** The level the tone should have between seconds `a` and `b` of the film under such settings. */
+function toneUnder(s, a, b) {
+  let sum = 0;
+  for (let i = 0; i < 200; i++) sum += gainAt(a + ((i + 0.5) / 200) * (b - a), s) ** 2;
+  return TONE * Math.sqrt(sum / 200);
+}
+
 /** Where a second of `a` (from frame `at`) sits in `b` around frame `where`: the lag in frames, and how alike they are there (1 = the same). */
 function findSound(a, at, b, where, reach = 1440, span = 24000) {
   const mono = (p, i) => (p[2 * i] ?? 0) + (p[2 * i + 1] ?? 0);
@@ -421,9 +455,13 @@ try {
   check('… 72 pictures, evenly spaced', at.length === 72 && at.every((t, k) => t === at[0] + k * (at[1] - at[0])), `${at.length} pictures, ${at.slice(0, 4).join(' ')} …`);
   file = framesOf(sample, W, H); cmp = compare(file, await sampleRenders());
   check('… each of them is its frame of the film (against lossless renders of frames 362–433)', file.length === 72 && cmp.low >= 30 && cmp.astray === 0, cmp.text);
-  const lag = Math.floor(((361 / 24) * 48000) / 1024) * 1024;
-  sound = pcm(sample); same = sameSound(sound, whole, lag, 2048);
-  check('… its sound is the film\'s own from that moment, sample for sample (it starts with a whole packet, ≤ 21 ms early)', same.differ === 0 && same.n > 2.9 * 96000 && 361 / 24 - lag / 48000 < 0.0214, `${same.n / 2} samples compared from ${(lag / 48000).toFixed(4)} s (the picture starts at ${(361 / 24).toFixed(4)} s): ${same.differ} differ`);
+  // (the piece's sound begins a packet or two before its first picture — a decoder needs the run-up — and the file's
+  // edit list keeps that from being played: what is heard begins with the picture, to the sample)
+  const lag = Math.round((361 / 24) * 48000);
+  sound = pcm(sample); same = sameSound(sound, whole, lag, 0);
+  check('… its sound is the film\'s own from that very moment, sample for sample from the first one', same.differ === 0 && same.n > 2.9 * 96000, `${same.n / 2} samples compared from ${(lag / 48000).toFixed(4)} s (the picture starts at ${(361 / 24).toFixed(4)} s): ${same.differ} differ`);
+  const edit = /elst/.test(bytes.toString('latin1', 0, Math.min(bytes.length, 200000)));
+  check('… (the run-up is there, and the file says so: an edit list)', edit, edit ? 'elst' : 'no elst box in the file\'s head');
   }
 
   // ================================================================================================
@@ -491,6 +529,176 @@ try {
   sound = made ? pcm(made.path) : new Int16Array(0);
   const found = sound.length > 80000 ? findSound(sound, 9600, whole, Math.round((99 / 24) * 48000) + 9600) : { lag: NaN, like: 0 };
   check('… its sound is the film\'s from that moment (encoded anew: alike, not the same; within 2 ms)', Math.abs(found.lag) <= 96 && found.like > 0.9 && Math.abs(sound.length / 96000 - 1) < 0.06, `${(sound.length / 96000).toFixed(3)} s; nearest ${(found.lag / 48).toFixed(2)} ms off, likeness ${found.like.toFixed(4)}`);
+  }
+
+  // ================================================================================================
+  if (part('music', 'music of one\'s own: where it lies in the file, and how loud')) {
+  const SOUND_FILES = ['_test_clicks.mp3', '_test_clicks.m4a', '_test_clicks.ogg', '_test_clicks.opus', '_test_clicks.flac', '_test_clicks.wav', '_test_short.mp3', '_test_odd.wav'];
+  const there = SOUND_FILES.every((n) => fs.existsSync(`${SOUNDS}/${n}`));
+  check('the test sounds are there', there, there ? SOUNDS : `not all of ${SOUND_FILES.join(', ')} in ${SOUNDS}: run tools/soundtest.py ${SOUNDS}`);
+  if (there) {
+  for (const n of SOUND_FILES) fs.copyFileSync(`${SOUNDS}/${n}`, `${MEDIA}/${n}`);
+  // the same music as a bare AAC stream (ADTS): no container around it says how many samples its encoder put in front
+  ff(['-loglevel', 'error', '-y', '-i', `${SOUNDS}/_test_clicks.wav`, '-c:a', 'aac', '-b:a', '192k', '-f', 'adts', `${MEDIA}/_test_clicks.aac`]);
+  fs.writeFileSync(`${MEDIA}/_test_fake.mp3`, 'this is no sound at all, only text. '.repeat(200));
+  await load('?f=1&paused&dpr=0.5&video');
+  await page.waitForFunction('!!window.__sounder', { timeout: 30000 });
+  await asked();
+  const OWN = { src: 'audio.m4a', start: 0, volume: 1, fadeIn: 0, fadeOut: 0 };
+  /** the page plays by these settings, as if set in the sound tool and not saved */
+  const play = async (settings) => { await page.evaluate((v) => window.__sounder.set(v), { ...OWN, ...settings }); await wait(80); };
+  /** a file of frames `from`…`to` under these settings: what the tool says, what ffmpeg finds, its sound */
+  const mixed = async (name, settings, from, to, format = 'mp4') => {
+    await play(settings);
+    const got = await make(name, { format, from, to });
+    if (!got) return { made: null, info: {}, sound: new Int16Array(0), seconds: 0 };
+    const sound = pcm(got.path);
+    return { made: got, info: about(got.path), sound, seconds: sound.length / 96000 };
+  };
+  const ms = (x) => `${x >= 0 ? '+' : ''}${x.toFixed(3)} ms`;
+  const clicks = (sound, at) => at.map((t) => clickAt(sound, t));
+  const inPlace = (list, by = 0.1, low = 0.8, high = 0.95) => list.length > 0 && list.every((c) => Math.abs(c.off) <= by && c.peak >= low && c.peak <= high);
+  const told = (list) => list.map((c) => `${ms(c.off)} (${c.peak.toFixed(3)} high)`).join(', ');
+  const megabytesOf = (sum) => Number((/до ≈ ([\d,]+) МБ/.exec(sum)?.[1] ?? 'NaN').replace(',', '.'));
+  let run, c;
+
+  // ---- the panel
+  const sumOwn = megabytesOf((await state()).sum);
+  await play({ src: 'media/_test_clicks.mp3', start: 0.25 });
+  st = await state();
+  check('the panel names the music that goes into the file', st.which === '· _test_clicks.mp3' && (await page.evaluate(() => document.querySelector('#exporter [data-a=which]').title)) === 'Музыка ролика — media/_test_clicks.mp3: её ставит инструмент «Звук» (S)', `«${st.which}»`);
+  check('… and counts its size as encoded sound (128 kbit/s a channel), not as the film\'s own (317 kbit/s)', Math.abs(sumOwn - megabytesOf(st.sum) - ((317000 - 256000) * FILM_END) / 8 / 2 ** 20) < 0.11, `${sumOwn} МБ with the film's own sound, ${megabytesOf(st.sum)} МБ with the music`);
+
+  // ---- MP3 into an MP4, into a WebM
+  run = await mixed('music_mp3.mp4', { src: 'media/_test_clicks.mp3', start: 0.25 }, 1, 72);
+  c = clicks(run.sound, [0.25, 0.75, 2]);
+  check('an MP3 from its second 0.25: AAC in the MP4, encoded anew, as long as the picture', !!run.made && run.made.sound === 'encoded' && run.info.video === `h264 ${W}x${H} 24fps` && run.info.audio === 'aac 44100 stereo' && run.made.frames === 72 && run.seconds >= 3 && run.seconds < 3.03 && !/без звука/.test(run.made.note),
+    `${run.info.video} + ${run.info.audio}; sound ${run.seconds.toFixed(4)} s; «${run.made?.note}»`);
+  check('… its clicks are where the settings put them, within 0.1 ms, and as high as they were', inPlace(c), told(c));
+  check('… and its tone as loud as it was', Math.abs(levelOf(run.sound, 1.1, 1.9) - TONE) < 0.004, `level ${levelOf(run.sound, 1.1, 1.9).toFixed(4)}, in the music ${TONE.toFixed(4)}`);
+  file = run.made ? framesOf(run.made.path, W, H) : [];
+  cmp = compare(file, await renders(range(72, 1), W, H));
+  check('… the pictures are the film\'s all the same (frames 1–72 against lossless renders)', file.length === 72 && cmp.low >= 30 && cmp.astray === 0, cmp.text);
+  run = await mixed('music_mp3.webm', { src: 'media/_test_clicks.mp3', start: 0.25 }, 1, 72, 'webm');
+  c = clicks(run.sound, [0.25, 0.75, 2]);
+  check('the same into a WebM: Opus, the clicks in place within 0.1 ms', !!run.made && run.made.sound === 'encoded' && run.info.audio === 'opus 48000 stereo' && run.seconds > 2.98 && run.seconds < 3.03 && inPlace(c) && Math.abs(levelOf(run.sound, 1.1, 1.9) - TONE) < 0.004,
+    `${run.info.audio}; sound ${run.seconds.toFixed(4)} s; ${told(c)}; level ${levelOf(run.sound, 1.1, 1.9).toFixed(4)}`);
+
+  // ---- music that comes in later, and quieter
+  run = await mixed('music_late.mp4', { src: 'media/_test_clicks.mp3', start: -1, volume: 0.5 }, 1, 72);
+  c = clicks(run.sound, [1.5, 2]);
+  check('music that comes in at 1 s of the film, at half its loudness: silence, then the music from its beginning, half as loud', !!run.made && run.made.sound === 'encoded' && levelOf(run.sound, 0.02, 0.98) < 0.0005 && Math.abs(levelOf(run.sound, 1.6, 1.95) - TONE / 2) < 0.003 && inPlace(c, 0.1, 0.4, 0.475) && run.seconds >= 3,
+    `level before it ${levelOf(run.sound, 0.02, 0.98).toFixed(5)}, in it ${levelOf(run.sound, 1.6, 1.95).toFixed(4)} (half of ${TONE.toFixed(4)}); clicks ${told(c)}`);
+
+  // ---- fades
+  const rise = { src: 'media/_test_clicks.mp3', fadeIn: 2 };
+  run = await mixed('music_fadein.mp4', rise, 1, 72);
+  let rows = [[0.1, 0.4], [0.6, 0.9], [1.2, 1.5], [1.6, 1.9], [2.5, 2.9]].map(([a, b]) => ({ a, b, is: levelOf(run.sound, a, b), want: toneUnder(rise, a, b) }));
+  check('a fade in of 2 s: the music rises as the square of the time, and is whole from then on', !!run.made && rows.every((r) => Math.abs(r.is - r.want) < 0.1 * r.want + 0.0006) && levelOf(run.sound, 0, 0.03) < 0.0005 && rows[0].is < 0.2 * rows[4].is,
+    rows.map((r) => `${r.a}–${r.b} s: ${r.is.toFixed(4)} (${r.want.toFixed(4)})`).join(', '));
+  const fall = { src: 'media/_test_clicks.mp3', fadeOut: 2 };
+  run = await mixed('music_fadeout.webm', fall, 1142, 1213, 'webm');
+  const t0 = 1141 / 24;
+  rows = [[0.2, 0.8], [1.4, 1.6], [1.9, 2.1], [2.4, 2.6], [2.9, 2.99]].map(([a, b]) => ({ a, b, is: levelOf(run.sound, a, b), want: toneUnder(fall, t0 + a, t0 + b) }));
+  check('a fade out of 2 s, the film\'s last three seconds (into a WebM): whole, then dying away to nothing at the last frame', !!run.made && run.made.sound === 'encoded' && rows.every((r) => Math.abs(r.is - r.want) < 0.1 * r.want + 0.0006) && rows[4].is < 0.0008 && run.seconds > 2.98,
+    rows.map((r) => `${r.a}–${r.b} s: ${r.is.toFixed(4)} (${r.want.toFixed(4)})`).join(', '));
+
+  // ---- music that is over before the film is
+  run = await mixed('music_short.mp4', { src: 'media/_test_short.mp3', start: 6 }, 1, 72);
+  check('music that is over at 2 s of the film: it sounds to its end, then the file is silent — and still as long as the picture', !!run.made && run.made.sound === 'encoded' && Math.abs(levelOf(run.sound, 0.3, 1.7) - TONE) < 0.004 && levelOf(run.sound, 2.2, 2.95) < 0.0005 && run.seconds >= 3 && run.seconds < 3.03,
+    `level ${levelOf(run.sound, 0.3, 1.7).toFixed(4)} while it sounds, ${levelOf(run.sound, 2.2, 2.95).toFixed(5)} after; sound ${run.seconds.toFixed(4)} s`);
+
+  // ---- every kind of music file, read from its middle: the click of its second 30 at a quarter of a second
+  // (a bare AAC stream carries its encoder's 1024 samples in front and nothing says so: 21.333 ms late in any player —
+  // the browser reads it so too, the page plays it so)
+  for (const [kind, name, late] of [['MP3', '_test_clicks.mp3', 0], ['M4A (AAC)', '_test_clicks.m4a', 0], ['OGG (Vorbis)', '_test_clicks.ogg', 0], ['Opus', '_test_clicks.opus', 0], ['FLAC', '_test_clicks.flac', 0], ['WAV', '_test_clicks.wav', 0], ['AAC, a bare stream', '_test_clicks.aac', 1024 / 48]]) {
+    const found = [];
+    for (const format of ['mp4', 'webm']) {
+      run = await mixed(`music_${name.split('.').pop()}_mid.${format}`, { src: `media/${name}`, start: 29.75 }, 1, 12, format);
+      found.push({ ...clickAt(run.sound, 0.25 + late / 1000), how: run.made?.sound, format });
+    }
+    check(`${kind}, from its second 29.75: the click of second 30 is in its place in an MP4 and in a WebM${late ? ' (as late as the stream itself is: 21.333 ms)' : ''}`, found.every((x) => x.how === 'encoded') && inPlace(found), found.map((x) => `${x.format}: ${ms(x.off)}, ${x.peak.toFixed(3)} high`).join('; '));
+  }
+
+  // ---- a rate and a width no encoder takes
+  run = await mixed('music_odd.mp4', { src: 'media/_test_odd.wav', start: 0.25 }, 1, 24);
+  c = clicks(run.sound, [0.25, 0.75]);
+  check('a WAV of 37.8 kHz and six channels: 48 kHz stereo in the MP4, the clicks in place', !!run.made && run.made.sound === 'encoded' && run.info.audio === 'aac 48000 stereo' && inPlace(c), `${run.info.audio}; ${told(c)}`);
+  run = await mixed('music_odd.webm', { src: 'media/_test_odd.wav', start: 0.25 }, 1, 24, 'webm');
+  c = clicks(run.sound, [0.25, 0.75]);
+  check('… and in the WebM', !!run.made && run.made.sound === 'encoded' && run.info.audio === 'opus 48000 stereo' && inPlace(c), `${run.info.audio}; ${told(c)}`);
+
+  // ---- music that is in the file's codec already and sounds as it is: nothing is encoded
+  run = await mixed('music_m4a_copy.mp4', { src: 'media/_test_clicks.m4a' }, 1, 72);
+  const source = pcm(`${SOUNDS}/_test_clicks.m4a`);
+  same = sameSound(run.sound, source, 0, 0);
+  check('an M4A that sounds as it is goes into the MP4 as it is: copied, the same sample for sample from the first one', !!run.made && run.made.sound === 'copied' && run.info.audio === 'aac 48000 stereo' && same.differ === 0 && same.n > 2.9 * 96000, `${same.n / 2} samples compared: ${same.differ} differ`);
+  /** the packets of a file's sound: [size, checksum] of each */
+  const packets = (path) => String(ff(['-loglevel', 'error', '-i', path, '-map', '0:a:0', '-c', 'copy', '-f', 'framecrc', '-']).out).split('\n').filter((l) => /^\s*0,/.test(l)).map((l) => l.split(',').slice(4, 6).map((x) => x.trim()).join(' '));
+  let ours = run.made ? packets(run.made.path) : [], theirs = packets(`${SOUNDS}/_test_clicks.m4a`);
+  check('… its packets are the music\'s own, byte for byte', ours.length >= 141 && ours.every((x, i) => x === theirs[i]), `${ours.length} packets, the first that differs: ${ours.findIndex((x, i) => x !== theirs[i])}`);
+  // from the film's middle: the sound begins a packet before the picture, and the file's edit list says so
+  run = await mixed('music_m4a_copy_mid.mp4', { src: 'media/_test_clicks.m4a' }, 25, 96);
+  c = clicks(run.sound, [0, 1.25]);
+  same = sameSound(run.sound, source, 48000, 0);
+  // (this music's encoder fills quiet bands with noise, and a decoder's noise depends on where it began: alike, not the same)
+  const alike = run.sound.length > 96000 ? findSound(run.sound, 4800, source, 48000 + 4800, 480, 24000) : { lag: NaN, like: 0 };
+  check('… from the film\'s second second: copied, the clicks of the music\'s seconds 1 and 2.25 at 0 and 1.25 s — the first of them whole', !!run.made && run.made.sound === 'copied' && inPlace(c) && alike.lag === 0 && alike.like > 0.999,
+    `${told(c)}; against the music itself: ${alike.lag} samples off, likeness ${alike.like.toFixed(5)}; ${same.differ} of ${same.n} values differ`);
+  for (const [from, to, at, what] of [[1, 72, [0.5, 1, 2.25], 'from the first frame'], [25, 96, [0, 1.25], 'from the film\'s second second']]) {
+    run = await mixed(`music_opus_copy_${from}.webm`, { src: 'media/_test_clicks.opus' }, from, to, 'webm');
+    c = clicks(run.sound, at);
+    ours = run.made ? packets(run.made.path) : [];
+    theirs = packets(`${SOUNDS}/_test_clicks.opus`);
+    const k = theirs.indexOf(ours[0]);
+    check(`an Opus file into a WebM, ${what}: copied — its own packets — and the clicks in place`, !!run.made && run.made.sound === 'copied' && run.info.audio === 'opus 48000 stereo' && inPlace(c) && k >= 0 && ours.length > 140 && ours.every((x, i) => x === theirs[k + i]) && run.seconds > 2.98 && run.seconds < 3.03,
+      `${told(c)}; ${ours.length} packets, from the music's packet ${k}; sound ${run.seconds.toFixed(4)} s`);
+    // the browser itself has to agree: it plays the track only if the header and the file name the same run-up
+    const heard = run.made ? await page.evaluate(async (at) => {
+      const data = await window.__exporter.file().blob.arrayBuffer();
+      let audio;
+      try { audio = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(data); } catch (e) { return { error: String(e) }; }
+      const x = audio.getChannelData(0);
+      return { seconds: audio.duration, clicks: at.map((t) => { const i = Math.round(t * 48000); let best = Math.max(0, i - 2400), peak = -1; for (let j = best; j < Math.min(x.length, i + 2400); j++) if (x[j] > peak) { peak = x[j]; best = j; } return { peak, off: (best / 48000 - t - 1 / 8000) * 1000 }; }) };
+    }, at) : { error: 'no file' };
+    check('… and the browser reads it so too', !heard.error && inPlace(heard.clicks) && heard.seconds > 2.98 && heard.seconds < 3.03, heard.error || `${told(heard.clicks)}; ${heard.seconds.toFixed(4)} s`);
+  }
+  run = await mixed('music_m4a_quiet.mp4', { src: 'media/_test_clicks.m4a', volume: 0.5 }, 1, 24);
+  c = clicks(run.sound, [0.5]);
+  check('… but not when it is made quieter: then it is encoded', !!run.made && run.made.sound === 'encoded' && inPlace(c, 0.1, 0.4, 0.475), told(c));
+
+  // ---- music that cannot be read
+  await play({ src: 'media/_test_fake.mp3' });
+  made = await make('music_fake.mp4', { from: 362, to: 367 });
+  info = made ? about(made.path) : {};
+  check('a file that is music by its name only: the video file is made without sound, and the panel says why', !!made && made.sound === null && info.audio === null && info.video === `h264 ${W}x${H} 24fps` && / Файл без звука: в файле музыки нет звука, который можно прочитать\. /.test(made.note), made ? `«${made.note}»` : 'no file');
+
+  // ---- the whole film
+  if (process.env.FULL) {
+    const whole1 = { src: 'media/_test_clicks.mp3', start: 2, fadeOut: 3 };
+    await play(whole1);
+    const t1 = Date.now();
+    made = await make('music_whole.mp4', {}, false, 1500000);
+    console.log(`     (the whole film with music: ${((Date.now() - t1) / 1000).toFixed(0)} s)`);
+    info = made ? about(made.path) : {};
+    sound = made ? pcm(made.path) : new Int16Array(0);
+    c = clicks(sound, [0.25, 3, 10, 17, 28, 43]);
+    check('the whole film with music of one\'s own: 1213 pictures, the sound as long as they are', !!made && made.frames === 1213 && made.sound === 'encoded' && info.audio === 'aac 44100 stereo' && Math.abs(sound.length / 96000 - FILM_END) < 0.03 && Math.abs(info.seconds - FILM_END) < 0.06, `${info.video} + ${info.audio}; sound ${(sound.length / 96000).toFixed(4)} s of ${FILM_END.toFixed(4)}`);
+    check('… the music does not drift: its clicks are in place from the first second to the forty-third, within 0.1 ms', inPlace(c), told(c));
+    rows = [[45.2, 46.8], [48.2, 48.6], [49.2, 49.6], [50.1, 50.4], [50.5, 50.54]].map(([a, b]) => ({ a, b, is: levelOf(sound, a, b), want: toneUnder(whole1, a, b) }));
+    check('… and it dies away over the last three seconds', rows.every((r) => Math.abs(r.is - r.want) < 0.1 * r.want + 0.0006) && rows[4].is < 0.0008, rows.map((r) => `${r.a}–${r.b} s: ${r.is.toFixed(4)} (${r.want.toFixed(4)})`).join(', '));
+  }
+
+  // the page plays the film's own sound again, and a page loaded after this one does too. (The film is put back where
+  // this test found it — the parts after this one draw that frame, and a page that has stood still for a while shows
+  // a picture of its own after a jump of forty seconds: the light's trail and the title are drawn anew.)
+  await play({});
+  await page.evaluate(() => window.__player.seek(361 / 24));
+  await wait(500);
+  await page.evaluate(() => sessionStorage.removeItem('sounder'));
+  st = await state();
+  check('back to the film\'s own sound: the panel names no music', st.which === '', `«${st.which}»`);
+  }
   }
 
   // ================================================================================================
@@ -739,7 +947,8 @@ try {
   // video tool; harmless).
   const expected = ran.has('lost') ? /WebGL context|Context Lost|context lost|graphics card (dropped|could not draw)|object does not belong to this context/i : /^$/;
   check('the browser asked before a page was left only while a file was being made', dialogs.join() === (ran.has('stop') ? 'stop: beforeunload' : ''), dialogs.join() || 'never');
-  const odd = [...new Set(msgs)].filter((m) => !expected.test(m));
+  // (and the page's own word about a music file it cannot play — this script's doing as well)
+  const odd = [...new Set(msgs)].filter((m) => !expected.test(m) && !/^\[music\] sound: media\/_test_fake\.mp3 cannot be played/.test(m));
   check('the console stayed clean (but for what the graphics card\'s failures, this script\'s doing, left there)', odd.length === 0, odd.slice(0, 6).join(' | ') || `${msgs.length} message(s) about those failures`);
 } catch (e) {
   failed++;

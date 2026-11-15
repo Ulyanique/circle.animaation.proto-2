@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import mediaTool from './src/dev/mediaServer.js';      // dev server only: the placement tool (key E on the page)
 import titleTool from './src/dev/brandServer.js';      // dev server only: the title tool (key T)
+import soundTool from './src/dev/soundServer.js';      // dev server only: the sound tool (key S)
 import { titleSettings, titleChars, keepGlyphs, pageHtml } from './src/fx/titleSettings.js';
 
 // The shot data files (src/shots/data/sNN.json) also carry what only the tools need: the raw tracked camera, the light
@@ -50,7 +51,7 @@ const brand = () => {
 
 export default defineConfig({
   base: './',
-  plugins: [slimShotData(), brand(), mediaTool(), titleTool()],
+  plugins: [slimShotData(), brand(), mediaTool(), titleTool(), soundTool()],
   server: {
     host: '0.0.0.0',
     port: 5173,
@@ -62,9 +63,10 @@ export default defineConfig({
     port: 4173,
     allowedHosts: true,
   },
-  // dev server only: the video tool (key V) fetches mediabunny when it is opened for the first time. Prepared with
-  // the server's start — found only then, it would make the page load again under the open tool
-  optimizeDeps: { include: ['mediabunny'] },
+  // dev server only: the video tool (key V) fetches mediabunny when it is opened for the first time, and its AAC
+  // encoder when a file needs one the browser has not got. Prepared with the server's start — found only then, they
+  // would make the page load again under the open tool
+  optimizeDeps: { include: ['mediabunny', '@mediabunny/aac-encoder'] },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1500,

@@ -1,9 +1,11 @@
-// buildtest.mjs — what the build makes of src/brand.js. Builds the site twice into OUTDIR (the user's settings as they
-// are, then a test variant with a tagline, a picture for the emblem and a character the font lacks), checks what was
-// shipped — the page's name, the glyphs kept from the font, the font's licence, nothing of the dev server's tools —
-// then serves the test build (vite preview) and draws its title in headless Chromium: OUTDIR/built_f1100.png.
+// buildtest.mjs — what the build makes of src/brand.js and of a music of one's own. Builds the site twice into OUTDIR
+// (the user's settings as they are, then a test variant with a tagline, a picture for the emblem, a music and a
+// character the font lacks), checks what was shipped — the page's name, the glyphs kept from the font, the font's
+// licence, nothing of the dev server's tools — then serves the test build (vite preview) and draws its title in
+// headless Chromium: OUTDIR/built_f1100.png.
 //   node buildtest.mjs [OUTDIR]          (default /tmp/work/buildtest; about a minute)
-// The user's src/brand.js is put back afterwards and the test picture is removed from public/media/.
+// The user's src/brand.js and src/sound.js are put back afterwards; the test picture and music are removed from
+// public/media/.
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
@@ -17,6 +19,11 @@ const PORT = 4174;
 fs.mkdirSync(out, { recursive: true });
 const brandFile = path.join(repo, 'src/brand.js'), picture = path.join(repo, 'public/media/_test_mark_build.svg');
 const original = fs.readFileSync(brandFile, 'utf8');
+// the music: a file of its own for the build, and src/sound.js naming it as a music of public/media/
+const soundFile = path.join(repo, 'src/sound.js'), music = path.join(repo, 'public/media/_test_music_build.mp3');
+const soundOriginal = fs.readFileSync(soundFile, 'utf8');
+const SOUNDS = process.env.SOUNDS || '/tmp/work/sound/files';
+const soundHead = soundOriginal.slice(0, soundOriginal.indexOf('export default {'));
 let failed = 0, checks = 0;
 const ok = (name, cond, note = '') => { checks++; if (!cond) failed++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${note ? ` — ${note}` : ''}`); };
 
@@ -29,7 +36,7 @@ const build = (dir) => {
 // that packs the video file, and the part of the film's own code that only the video tool calls (core/slots.js,
 // settleVideos). Words that a minifier leaves as they are — and that three.js does not use itself (it has its own
 // VideoFrame and requestVideoFrameCallback).
-const DEV_ONLY = ['__placer', '__titler', '__exporter', 'Подгонка кадра', 'Сохранить видео', 'mediabunny', 'VideoEncoder', '__settleLog', 'shown late'];
+const DEV_ONLY = ['__placer', '__titler', '__sounder', '__exporter', 'Подгонка кадра', 'Сохранить видео', 'mediabunny', 'registerAacEncoder', 'VideoEncoder', '__settleLog', 'shown late'];
 /** What a build shipped. */
 const shipped = (dir) => {
   const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
@@ -47,7 +54,7 @@ const shipped = (dir) => {
 let server = null, browser = null;
 /** The file replaced in one step: a dev server that may be running then sees one change, and never an empty file. */
 const put = (file, text) => { fs.writeFileSync(`${file}.buildtest-tmp`, text); fs.renameSync(`${file}.buildtest-tmp`, file); };
-const restore = () => { put(brandFile, original); fs.rmSync(picture, { force: true }); };
+const restore = () => { put(brandFile, original); put(soundFile, soundOriginal); fs.rmSync(picture, { force: true }); fs.rmSync(music, { force: true }); };
 process.on('SIGINT', () => { restore(); server?.kill(); process.exit(130); });
 try {
   // ---- 1. the settings as they are
@@ -65,7 +72,9 @@ try {
   // ---- 2. a test variant
   const test = { caption: 'Северный ветер № 7', tagline: 'бюро · Zürich 東', emblem: 'media/_test_mark_build.svg', name: 'Проверка <сборки>' };
   fs.writeFileSync(picture, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 200"><path d="M120 8 L228 192 H12 Z M120 70 L66 162 H174 Z"/><circle cx="120" cy="132" r="17"/></svg>');
+  fs.copyFileSync(`${SOUNDS}/_test_short.mp3`, music);
   put(brandFile, `// buildtest: a test variant — the tool puts the real file back when it is done\nexport default ${JSON.stringify(test, null, 2)};\n`);
+  put(soundFile, `${soundHead}export default {\n  src: 'media/_test_music_build.mp3',\n  start: 3.5,\n  volume: 0.5,\n};\n`);
   const dir = path.join(out, 'variant');
   b = build(dir);
   ok('the build of the test variant succeeds', b.code === 0, b.code === 0 ? '' : b.log.slice(-600));
@@ -75,6 +84,7 @@ try {
   ok('… warns about the character the font lacks', /no glyphs for 東/.test(b.log));
   ok('… names the page', s.tab === 'Проверка &lt;сборки&gt;' && s.loading === 'Северный ветер № 7', `tab «${s.tab}», loading screen «${s.loading}»`);
   ok('… carries the font licence and the picture', s.licence && fs.existsSync(path.join(dir, 'media/_test_mark_build.svg')));
+  ok('… and ships the music of src/sound.js with it', fs.existsSync(path.join(dir, 'media/_test_music_build.mp3')) && fs.readFileSync(path.join(dir, 'media/_test_music_build.mp3')).equals(fs.readFileSync(music)));
 
   // ---- 3. the test build on screen
   server = spawn(vite, ['preview', '--outDir', dir, '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], { cwd: repo, stdio: 'ignore' });
@@ -106,6 +116,15 @@ try {
   });
   ok('… with the caption drawn', px.caption > px.above + 12, `band of the caption ${px.caption.toFixed(1)}, band above it ${px.above.toFixed(1)}`);
   ok('… and the picture standing for the emblem, in gold', px.emblem > px.beside + 25, `inside the circle ${px.emblem.toFixed(1)}, beside it ${px.beside.toFixed(1)}`);
+  // the music: the built page plays the file of src/sound.js from its second 3.5, and the tool is not there to say so
+  await page.evaluate(() => window.__player.setSound(true));      // (what a click on the page would do)
+  await page.evaluate(() => window.__player.seek(1));
+  await page.evaluate(() => window.__player.play());
+  let now = null;
+  for (let i = 0; i < 60; i++) { now = await page.evaluate(() => { const a = window.__player.audio; return { src: decodeURIComponent(new URL(a.src).pathname), t: a.currentTime, paused: a.paused, volume: a.volume, length: a.duration, film: window.__player.time }; }); if (now.t > 4.6) break; await new Promise((r) => setTimeout(r, 200)); }
+  await page.evaluate(() => window.__player.pause());
+  ok('the built page plays a music of its own from src/sound.js', now?.src === '/media/_test_music_build.mp3' && Math.abs(now.length - 8) < 0.1 && !now.paused && Math.abs(now.t - (now.film + 3.5)) < 0.5, JSON.stringify(now));
+  ok('… at the volume it says', now?.volume > 0.49 && now.volume < 0.5001, `volume ${now?.volume}`);
 } finally {
   restore();
   await browser?.close();

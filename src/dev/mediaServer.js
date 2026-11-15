@@ -92,11 +92,13 @@ function saveEntries(entries) {
   return { ok: true, changed: next !== text, lines };
 }
 
+let uploads = 0;
 /** Streams the request body into public/media/<name> (`name`: a file name that safeName has passed). */
 export function takeFile(req, res, name, reply) {
   if (Number(req.headers['content-length']) > MAX_UPLOAD) { res.setHeader('Connection', 'close'); return reply(413, { error: 'file too big' }); }
   fs.mkdirSync(DIR, { recursive: true });
-  const tmp = path.join(DIR, `.upload-${process.pid}-${Date.now()}`), out = fs.createWriteStream(tmp);
+  // (a name of its own for every upload: two that arrive in the same millisecond must not write into one file)
+  const tmp = path.join(DIR, `.upload-${process.pid}-${Date.now()}-${++uploads}`), out = fs.createWriteStream(tmp);
   let size = 0, done = false;
   const fail = (code, error) => {
     if (done) return;

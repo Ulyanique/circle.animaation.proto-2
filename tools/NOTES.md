@@ -28,6 +28,7 @@ Nothing in `tools/` is needed to run or build the site. `bash tools/setup.sh` re
     node heroprobe.mjs 0.4                                   # the light as drawn, sub-frame steps
     node titleshot.mjs OUTDIR; node buildtest.mjs            # the final title with other settings; what the build ships (see The final title)
     node exporttest.mjs OUTDIR                               # the video tool: files made by the page, read back by ffmpeg (see The film as a video file)
+    node soundtest.mjs [/tmp/work/sound/files]               # the sound tool driven by keyboard and mouse (see The soundtrack)
     node /home/user/circle.animaation.proto-2/tools/captiontest.mjs      # the title's text, no browser (from the repo: it needs three.js)
     cd /tmp/work && /tmp/tools/venv/bin/python /home/user/work/bin/<tool>.py …   # system python has no numpy
 
@@ -363,10 +364,70 @@ Any photo or video in any window. User-facing description: README, «Свои ф
     upload file removed asynchronously after the answer made "nothing is left behind" fail one run in three — the
     server now removes it first and answers after.
 
+## The soundtrack (`src/sound.js` → `src/core/soundtrack.js`, tool `src/dev/sounder.js`)
+
+- **What it is.** Key S, `?sound` or the note in the player's bar; dev server only (started in `main.js` next to the
+  other tools). `src/sound.js` is a setting like `media.js` and `brand.js`: `src` (a file under `public/`, default
+  `audio.m4a` = `OWN_SOUND`), `start` (the music's second at the film's first frame; negative — it comes in later),
+  `volume`, `fadeIn`, `fadeOut`. `core/soundSettings.js` parses it (no browser APIs: the server and `linetest` use the
+  same code); `gainAt(t, s)` = `volume · clamp(t / fadeIn)² · clamp((FILM_END − t) / fadeOut)²`, `FILM_END` = 1213/24.
+- **The element follows the picture.** `core/soundtrack.js`: one `<audio>`, `play()` / `pause()` with the film, set
+  before each frame (`follow(t)`): small drift is trimmed with an inaudible change of the playback rate (1 %), a jump
+  of more than 0.3 s is a jump; where the film is and the music is not (before its entrance, after its end) the
+  element rests (`out`); a `NotAllowedError` (the page was never touched) is not retried by itself. The volume is the
+  film's own gain curve, set once per drawn picture — on this machine, without a graphics card, that can be half a
+  second behind a seek: the tool's test allows it 0.7 s of catch-up.
+- **The tool.** `sounder.js` holds the settings as `soundLine.js` will write them (`tidySound`), so what is on the
+  screen is what is saved: `edit()` → `showSound(next, anew)` → the film plays it at once; the strips are drawn from
+  the film's cuts (`player.links`, the seamless ones left out) and the flash (974), the music's waveform from
+  `OfflineAudioContext(1, 1, 16000)` (100 values a second — at 8 kHz the test clicks flattened to 0.766 of 0.9).
+  `soundLine.js` (page and server): `tidySound`, `soundEntries` / `soundBlock`, `putSound(text, settings)` — the same
+  idea as `putBrand`, one setting per line, comments and the user's own lines kept, a new line before the commented
+  example of its key. `soundServer.js`: `GET /__sound` → `{ files, write, max }`; `POST /__sound` `{ settings }` →
+  the new text is imported back and must say exactly what was asked, then one write by temporary file + rename;
+  `POST /__sound/file?name=` → `public/media/` (MP3, M4A, AAC, WAV, OGG, Opus, FLAC). Same write rules as `/__media`.
+  A changed `src/sound.js` reaches the open page as a hot update (`track.js` — the module's own `changed` hook) and
+  the tool takes it over: the file wins, unless the news is the echo of its own save (it notes `sending` first).
+- **Drops, one file one tool.** `panel.js`: `tool(name, close, takesFiles)` — the sound tool takes a file, the video
+  tool does not; `dropTool()` names the open tool that takes files; `audioDragged(e)` tells a sound file in the air
+  (a browser knows the kind, not the name, until it is dropped); `takesMusic(take)` / `offerMusic(file)` — music
+  dropped on the placement or the title tool goes to the sound tool (that opens, closing the other). `claim(e)`
+  (a `WeakSet` of drop events) makes it one file, one tool: the tool that is opened *by* the drop would otherwise take
+  the same file again, and the file was sent twice. Measured before the fix: two uploads, the second reported as
+  «заменил прежний файл с этим именем», the element read the file twice.
+- **A new file is not served at once.** The dev server learns of the files of `public/` from its watcher
+  (`initPublicFiles` + `onFileAddUnlink`): for a few milliseconds after an upload it answers for
+  `/media/<new name>` with the page itself (`200 text/html` — measured 5–20 ms, once 48 ms). A picture or a music
+  asked for in that moment is broken: Chromium keeps the failed load in its cache (`?anew=<time>` — a fresh address),
+  so it stays broken. `landed(src)` (panel.js) asks for the file's address until the server serves the file itself
+  (HEAD, 30 ms apart, 3 s at most) — the tools call it after an upload, before showing the new file. Uploads also get
+  a name of their own (`.upload-<pid>-<ms>-<n>`): two in the same millisecond must not write into one file.
+- **The file the page is served** is the same page for a missing file of `public/` — that is why a broken music says
+  «файла нет на месте или формат ему незнаком».
+- **Checks.** `node tools/linetest.mjs` (plain node: the lines, `putSound` on many shapes of file). `soundtest.mjs
+  [FILES]` (headless, needs the dev server on this machine, test sounds from `tools/soundtest.py`, ≈ 2 min, 135
+  checks; parts `ONLY=server,panel,strips,keys,upload,drop,readonly,live`; `URL=` points it at another dev server —
+  without `MEDIA_TOOL=remote` it also checks the server's «read-only» refusals). Each part starts from a tab just
+  opened (`sessionStorage` cleared, `about:blank`): the tools remember that they were open through a page load. What
+  it checks: `/__sound` and its refusals; the panel's words, the list, the waveform, the strips and the mouse on
+  them; saving, «Вернуть», a file changed by hand, unsaved settings through a reload; keys typed into a field stay
+  there; upload, drop, a file replaced under its name, the file sent once; a page that may not write; and the film
+  running in real time (the element follows the clock, rests before the entrance and after the music's end, the
+  fades follow `gainAt`). It reads the `<audio>` element — what a loudspeaker does is not checked.
+  `soundershot.mjs OUT.png [FRAME] [START]` makes `docs/sounder.jpg` (a test music as `public/media/music.mp3`
+  while it runs, its hit put on the frame shown; nothing is saved).
+- **Traps met on the way.** A browser keeps a music by its address: the same name replaced on disk went on playing
+  the old file — hence `?anew=<time>` and `anew` in `showSound`. `await import('/src/core/soundtrack.js')` inside
+  `evaluate` is another module instance (its element null) — use `window.__sounder`. Headless Chromium does not find
+  a file with a Cyrillic name for `uploadFile` without `LC_ALL=C.utf8`. `safeName` turns «—» into «_». A page that
+  was opened at the moment `src/sound.js` changed the number of its lines reloads itself — the test goes to
+  `about:blank` first. «Failed to launch the browser process: Code: null» when a run starts right after another:
+  wait a couple of seconds. Screenshots of `soundlook.mjs` are 1920×1080; a crop beyond that is empty.
+
 ## The film as a video file (`src/dev/exporter.js` + `src/dev/filmFile.js`)
 
 - **What it is.** Key V, `?video` or the button in the player's bar; dev server only (started in `main.js` next to the
-  other two tools, `panel.js` knows its ids). `filmFile.js` draws frames `from`…`to` into the page's own canvas at the
+  other tools, `panel.js` knows its ids). `filmFile.js` draws frames `from`…`to` into the page's own canvas at the
   file's size, hands each to the browser's encoder (WebCodecs) through mediabunny's `CanvasSource` and resolves to a
   Blob; `exporter.js` is the panel around it («Видеофайл»: size, rate, quality, format, sound; «Сохранить видео»,
   «Проба: 3 секунды отсюда», «Стоп»; the download; `window.__exporter` for the checks). Nothing goes through the dev
@@ -403,10 +464,29 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   `syncVideos` inside `renderAt` would move the videos again, hence the hold. `window.__settleLog` is a hook for
   `exporttest` (how each call ended, in the words above); the build drops it together with `settleVideos`
   (`buildtest` looks).
-- **Sound.** MP4: the AAC packets of `public/audio.m4a` are copied (`EncodedPacketSink` →
-  `EncodedAudioPacketSource`) — nothing is decoded, and Chromium has no AAC encoder anyway; a piece of the film
-  starts with a whole packet, up to 21 ms early. WebM: decoded and encoded as Opus, 192 kbit/s. A soundtrack that
-  cannot be read or encoded gives a silent file and a sentence in the panel, not a failure.
+- **Sound.** `openSound(track, t0, t1)`: the soundtrack's packets from `t0` to `t1` as `openVideo`'s counterparts
+  (`source`, `how`, `most`, `feed`, `close`). **Copied** when the music is in the file's own codec and untouched
+  (`music` option: no `start`, no fades): AAC into an MP4, Opus into a WebM. **Encoded** otherwise: decoded with the
+  browser (`OfflineAudioContext`) and handed to its encoder — AAC 128 kbit/s per channel at the music's rate (48 kHz
+  if the browser refuses that rate or it is above), Opus 96 kbit/s at 48 kHz, at most 2 channels. Without an encoder
+  for the music's rate the file is silent (`sound: null`), with a sentence in the panel; the same for music that
+  cannot be read.
+  - The copied piece begins **before** the picture, by the track's own pre-roll (MP4: a packet of AAC, 21.3 ms;
+    WebM: the codec delay, 6.5–80 ms), because a decoder needs the run-up to be in place to the sample. The file is
+    told so and does not play it: packets with a negative timestamp go in as they are and the muxer writes the
+    **edit list** for an MP4 (`startTimestampOffset`, `isobmff-boxes.js` `edts`) or **CodecDelay** for a WebM
+    (`matroska-muxer.js`: `codecDelay = max(−timestamp, 0)`); both are read back by ffmpeg and the browser. For Opus
+    the header's own **pre-skip** must say the same (the `OpusHead` bytes at 10…11 changed in `decoderConfig`), or
+    Chromium refuses to decode the track. Measured: clicks at 0.000 ms, the first picture's moment included; the
+    packets of the piece are the music's own, byte for byte, from the first one.
+  - The film's own sound (`public/audio.m4a`, untouched, into an MP4) is copied with a bit rate of 317 kbit/s
+    (`soundBitrate`), not the ordinary 128 per channel.
+  - A bare ADTS `.aac` is 21.3 ms late in every reader (`decodeAudioData`, the element, mediabunny): the stream says
+    nothing about where it begins — accepted, not worked around.
+  - Opus is always encoded at 48 kHz: through the browser's encoder at the music's own 44.1 kHz it came out 0.729 ms
+    late.
+  - Vorbis (mediabunny stamps its first decoded piece with the first packet's time) is read from the beginning and
+    shifted by that packet: `pull(want)`.
 - **File.** MP4 with `fastStart: 'reserve'`: the index at the head (`ftyp moov free mdat`) without holding the packets
   twice; both tracks must then state `maximumPacketCount` (more packets than stated is an error — for the sound a
   generous count). `BufferTarget`: the file is built in memory (doubling from 64 kB, 4 GB at most), hence the cap of
@@ -451,9 +531,10 @@ Any photo or video in any window. User-facing description: README, «Свои ф
     on a border of the clip's frames, and there the browser is asked; WebM `changed` 54, `shown` + `shown late` 92.
     Out of sight the MP4 gives `held` 81, `changed` 57, `grace` 20: two seconds of waiting in 158 pictures.
     `patience` never.
-- **Checks.** `exporttest.mjs [OUTDIR]` (headless, needs the dev server and `/tmp/tools/ffmpeg`; ≈ 9 min and 69
-  checks; `FULL=1` adds the whole film, ≈ 4 min and 5 checks; `HUGE=1` adds a few frames at 2560×1440 and
-  3840×2160, ≈ 3 min and 3 checks; `ONLY=panel,sample,…` for some of its parts — the list is in its header). Its files
+- **Checks.** `exporttest.mjs [OUTDIR]` (headless, needs the dev server and `/tmp/tools/ffmpeg`; ≈ 12 min and 101
+  checks; `FULL=1` adds a whole film with music (`ONLY=music FULL=1`: ≈ 6.5 min and 3 checks); `HUGE=1` adds a few
+  frames at 2560×1440 and 3840×2160, ≈ 3 min and 3 checks; `ONLY=panel,sample,…` for some of its parts — the list
+  is in its header; part `music` needs `/tmp/work/sound/files` or `SOUNDS=`). Its files
   are 320×180, one is 1280×720. It makes clips `public/media/_test_levels*` (every frame one flat grey, far from its
   neighbours': a frame that is late cannot hide) and a `w04` line in `src/media.js`, and puts everything back, also
   after a failure. Parts: the panel; a «проба» through the buttons and its download; «Стоп», and leaving the page
@@ -464,8 +545,17 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   sight (the window minimised through `Browser.setWindowBounds` — headless shell then reports `visibilityState: hidden`
   and stops `requestAnimationFrame`, though it does not slow timers down as a real background tab does); a browser
   that lacks an encoder (H.264, both, WebCodecs altogether, Opus; a soundtrack that answers 404) — each on a page
-  that is told so before its scripts run. `exportershot.mjs OUT.png [FRAME]` makes `docs/exporter.jpg` (scaled to
-  1600×900, JPEG quality 86, like the other two panels' pictures).
+  that is told so before its scripts run; `music` — music of one's own in the file (below). `exportershot.mjs OUT.png
+  [FRAME]` makes `docs/exporter.jpg` (scaled to 1600×900, JPEG quality 86, like the other panels' pictures).
+- **Part `music`** (28 checks, ≈ 100 s; +3 with `FULL=1`). Files: 3 s of the film, 320×180, sound as the music has it;
+  the test music is `tools/soundtest.py`'s `_test_clicks.*` (clicks at 0.5, 1, 2.25, 5, 12 s …, a 997 Hz tone on the
+  right, 440 Hz on the left). It reads the files back through ffmpeg: `clickAt` (the peak within 2.5 ms of where the
+  click should be), `levelOf`, `gainAt`, `toneUnder`. What is measured: the clicks at 0.000 ms in MP4 and in WebM
+  from every format (MP3, M4A, OGG, Opus, FLAC, WAV — and a bare `.aac` 21.333 ms late, accepted); the entrance
+  (`start` 1, half volume) and the fades within 3 % of the square law; the estimate of the file's size with music; a
+  **copied** track against the music itself, sample for sample (`sameSound`) and packet for packet (`ffmpeg -c copy -f
+  framecrc`), from the first picture and from the film's second second, and what the browser itself decodes out of
+  the finished file (`decodeAudioData` — it plays the track only if `OpusHead` and `CodecDelay` agree).
 - **Traps met on the way.**
   - ffmpeg's default conversion to RGB darkens by about a level (R −0.8, G −1.5, B −0.7) — that was the reading back,
     not the encoder: `-sws_flags accurate_rnd+full_chroma_int`.
@@ -518,6 +608,13 @@ Any photo or video in any window. User-facing description: README, «Свои ф
   capture tools must render, wait, render again (`slotshot.mjs`). A GLSL comment with a back-tick inside the shader's
   template string ends the string («Unexpected identifier»).
 
+- Sound: a copied track that begins with the picture → clicks 7–21 ms late (the decoder had no run-up). Opus encoded
+  at the music's own 44.1 kHz → 0.729 ms late; always 48 kHz. Vorbis read from the first *decoded* piece → the music
+  early by its first packet. The `<audio>` element told the file's address the same on a replaced file → the old music
+  played on (`?anew=<time>`). A new file of `public/` asked for in the millisecond it landed → the page itself, cached
+  as a failure (`landed()`). A drop taken by the tool it opens → the file sent twice (`claim()`). Reading the waveform
+  at 8 kHz → the test clicks flattened to 0.766 of 0.9 (16 kHz now).
+
 - Video file: waiting for `seeked` alone before a frame is drawn → a stale picture now and then. Keeping the
   element's picture for a WebM, or within half a millisecond past a frame's end, "because it still covers the
   moment" → the frame before, in a regular pattern (the traps of that section). A flat PSNR floor for the whole
@@ -543,3 +640,5 @@ Since then every change is held against a render of the commit before it (640×3
 with the settings as committed, the title tool and the video tool left every frame as it was, pixel for pixel. Build
 with the video tool in the dev server: 1,142.89 kB (gzip 366) — 0.3 kB more than before it (`player.hold`, the
 slots' `fresh()`); the tool itself and mediabunny are not in it.
+With the sound tool (own music): 1,144.21 kB (gzip 366.10), CSS 3.27 kB — all 1213 frames still bit-identical
+to the render before it; boot 5.9 s, no console messages.

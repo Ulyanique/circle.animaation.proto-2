@@ -1,8 +1,11 @@
 // What the tools of the dev server have in common on the page — the placement tool (placer.js, key E), the title
-// tool (titler.js, key T) and the video tool (exporter.js, key V): the look of their panels, their buttons in the
-// player's bar, and the rule that one of them is open at a time. Not part of the build.
+// tool (titler.js, key T), the sound tool (sounder.js, key S) and the video tool (exporter.js, key V): the look of
+// their panels, their buttons in the player's bar, and the rule that one of them is open at a time. Not part of the
+// build.
 
-const P = ':is(#placer, #titler, #exporter)', OPEN = '#hud :is(#placer-open, #titler-open, #exporter-open)';
+import { SOUND_FILE } from './soundLine.js';
+
+const P = ':is(#placer, #titler, #sounder, #exporter)', OPEN = '#hud :is(#placer-open, #titler-open, #sounder-open, #exporter-open)';
 const CSS = `
 ${P} {
   position: absolute; top: 14px; right: 14px; width: 330px; max-width: calc(100% - 28px); max-height: calc(100% - 28px); overflow: auto;
@@ -72,10 +75,10 @@ export function releaseKeys(panel) {
 }
 
 // ---- one tool at a time: their panels stand in the same place, and a dropped file goes to the one that is open ----
-const closers = new Map();
+const closers = new Map(), takers = new Set();
 let current = null;
-/** A tool says how it is closed. */
-export function tool(name, close) { closers.set(name, close); }
+/** A tool says how it is closed, and whether a file dropped on the page is its business while it is open. */
+export function tool(name, close, takesFiles = true) { closers.set(name, close); if (takesFiles) takers.add(name); }
 /** A tool says that it has opened (the other one then closes) or closed. */
 export function toolOpen(name, on) {
   if (!on) { if (current === name) current = null; return; }
@@ -84,5 +87,59 @@ export function toolOpen(name, on) {
 }
 /** The name of the tool that is open, or null. */
 export const openTool = () => current;
+/**
+ * The tool a dropped file belongs to because it is open, or null: then the file's kind decides — a picture or a video
+ * is for a window (placer.js), music for the soundtrack (sounder.js).
+ */
+export const dropTool = () => (takers.has(current) ? current : null);
+/**
+ * Is it a sound file that is being dragged over the page? Then it is for the sound tool, not for a window. (While a
+ * file is still in the air a browser tells its kind, not its name; one that tells nothing answers false — and the
+ * file finds its way once it is dropped: offerMusic.)
+ */
+export const audioDragged = (e) => [...(e.dataTransfer?.items ?? [])].some((item) => item.kind === 'file' && item.type.startsWith('audio/'));
+let music = null;
+/** The sound tool says how it takes a music file from the computer. */
+export const takesMusic = (take) => { music = take; };
+/**
+ * A file was dropped on a tool that has no use for music (a window takes pictures, the title a logo): if it is music
+ * by its name, the sound tool gets it. -> was it taken?
+ */
+export function offerMusic(file, more = 0) {
+  if (!music || !SOUND_FILE.test(file?.name || '')) return false;
+  music(file, more);
+  return true;
+}
+
+const dropped = new WeakSet();
+/**
+ * One dropped file, one tool: the first tool to take a drop has it. (Taking it may open another tool — music dropped
+ * on the placement tool opens the sound tool — and that one, asked next about the same drop, would take the file a
+ * second time.) -> may the asker have it?
+ */
+export function claim(e) {
+  if (dropped.has(e)) return false;
+  dropped.add(e);
+  return true;
+}
+
+/**
+ * A file that has only just landed in public/media/ is not there for the page at once: the dev server learns of a new
+ * file from its file watcher, a moment later, and until then answers for the file's address with the page itself — a
+ * picture or a music asked for in that moment would come out "broken". Waits until the file itself is served (a few
+ * milliseconds as a rule; three seconds at most — then the caller goes on and the browser says what it finds).
+ * `src`: the file under public/, as media.js names it.
+ */
+export async function landed(src, patience = 3000) {
+  const url = new URL(src, document.baseURI);
+  for (const t0 = performance.now(); performance.now() - t0 < patience;) {
+    try {
+      const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (res.ok && !(res.headers.get('content-type') || '').startsWith('text/html')) return true;
+    } catch { /* the server is busy: once more */ }
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  return false;
+}
 
 export const megabytes = (n) => (n < 1e5 ? `${Math.max(1, Math.round(n / 1024))} КБ` : `${(n / 2 ** 20).toFixed(1).replace('.', ',')} МБ`);

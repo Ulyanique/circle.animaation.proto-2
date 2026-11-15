@@ -1,6 +1,7 @@
 // The settings of the final title as lines of src/brand.js, and putting those lines into the file's text. Shared by the
 // title tool in the browser (titler.js) and by its side of the dev server (brandServer.js), so that what the tool
 // shows is exactly what gets written. Plain functions, no browser or node APIs. Not part of the build.
+// (The soundtrack's settings are written the same way — soundLine.js uses `putEntries` and `quote` of this file.)
 
 import { titleSettings } from '../fx/titleSettings.js';
 import { bare, commentAt } from './mediaLine.js';
@@ -13,8 +14,8 @@ export const EMBLEM_FILE = /\.(svg|png|webp|avif|gif|jpe?g)$/i;
 export const MAX_TEXT = 200;
 
 const num = (v) => String(Number(v.toFixed(3)));
-// a text in single quotes; what would break the line or hide in it is written as an escape
-const quote = (t) => `'${t.replace(/[\\']/g, '\\$&').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}'`;
+/** A text in single quotes; what would break the line or hide in it is written as an escape. */
+export const quote = (t) => `'${t.replace(/[\\']/g, '\\$&').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}'`;
 
 /**
  * Settings as src/brand.js exports them, complete and at the precision of the written line — the form the tool keeps
@@ -71,22 +72,24 @@ export function cleanBrand(raw) {
   return out;
 }
 
-const KEY = new RegExp(`^\\s*(${KEYS.join('|')})\\s*:`), NOTE = new RegExp(`^\\s*//\\s*(${KEYS.join('|')})\\s*:`);
 // a line the tool can rewrite, its strings emptied (mediaLine.js: bare): one key, one plain value
 const PLAIN = /^\s*\w+\s*:\s*(''|""|[-+.\w]+)\s*,?\s*$/;
 
 /**
- * Puts the settings into the text of src/brand.js, line by line: the line of a key is replaced (a comment after it
- * stays), added in the order of KEYS, or taken out where the value is the default again. Every other line — comments,
- * commented-out examples — is left as it is. Throws if the file no longer looks like `export default {` … `};` with
- * one `key: value,` per line; whether the result says what was meant is for the caller to check (brandServer.js).
+ * Puts settings into the text of a file that is one `export default {` … `};` with a `key: value,` per line — `file`
+ * is its name, for the errors; `keys` are the keys it may hold, in the order they are written in; `entries` is what
+ * it has to say: [[key, value as written], …]. Line by line: the line of a key is replaced (a comment after it
+ * stays), added in the order of `keys`, or taken out where the key has no entry. Every other line — comments,
+ * commented-out examples — is left as it is. Throws if the file no longer looks like that; whether the result says
+ * what was meant is for the caller to check (brandServer.js, soundServer.js).
  */
-export function putBrand(text, raw) {
+export function putEntries(text, file, keys, entries) {
+  const KEY = new RegExp(`^\\s*(${keys.join('|')})\\s*:`), NOTE = new RegExp(`^\\s*//\\s*(${keys.join('|')})\\s*:`);
   const eol = text.includes('\r\n') ? '\r\n' : '\n', lines = text.split(/\r?\n/), code = lines.map(bare);
   const open = lines.findIndex((l) => /^export default \{\s*(\/\/.*)?$/.test(l));
-  if (open < 0) throw new Error('src/brand.js: no "export default {" line');
+  if (open < 0) throw new Error(`${file}: no "export default {" line`);
   let close = lines.findIndex((l, i) => i > open && /^\};?\s*(\/\/.*)?$/.test(l));
-  if (close < 0) throw new Error('src/brand.js: no closing "};" line');
+  if (close < 0) throw new Error(`${file}: no closing "};" line`);
   const keyAt = (i) => KEY.exec(code[i])?.[1] ?? null;      // the key a line sets …
   const noteAt = (i) => (code[i].trim() ? null : NOTE.exec(lines[i])?.[1] ?? null);      // … or would, were it not commented out
   let indent = '  ';
@@ -94,13 +97,13 @@ export function putBrand(text, raw) {
   for (let i = open + 1; i < close; i++) {
     const k = keyAt(i);
     if (!k) continue;
-    if (seen.has(k)) throw new Error(`src/brand.js: two lines of ${k}`);
-    if (!PLAIN.test(code[i])) throw new Error(`src/brand.js: the line of ${k} is not a plain "${k}: value," — put each setting on a line of its own`);
+    if (seen.has(k)) throw new Error(`${file}: two lines of ${k}`);
+    if (!PLAIN.test(code[i])) throw new Error(`${file}: the line of ${k} is not a plain "${k}: value," — put each setting on a line of its own`);
     if (!seen.size) indent = /^\s*/.exec(lines[i])[0];
     seen.add(k);
   }
-  const want = new Map(brandEntries(raw));
-  for (const k of KEYS) {
+  const want = new Map(entries);
+  for (const k of keys) {
     let at = -1;
     for (let i = open + 1; i < close && at < 0; i++) if (keyAt(i) === k) at = i;
     if (!want.has(k)) {
@@ -113,14 +116,17 @@ export function putBrand(text, raw) {
       lines[at] = /^\s*/.exec(lines[at])[0] + entry + tail;
     } else {
       // before the first line of a later key; an example of the key itself that is commented out comes right after
-      const order = KEYS.indexOf(k);
+      const order = keys.indexOf(k);
       let pos = close;
       for (let i = open + 1; i < close; i++) {
         const o = keyAt(i), n = noteAt(i);
-        if ((o && KEYS.indexOf(o) > order) || (n && KEYS.indexOf(n) >= order)) { pos = i; break; }
+        if ((o && keys.indexOf(o) > order) || (n && keys.indexOf(n) >= order)) { pos = i; break; }
       }
       lines.splice(pos, 0, indent + entry); code.splice(pos, 0, bare(indent + entry)); close++;
     }
   }
   return lines.join(eol);
 }
+
+/** Puts the title's settings into the text of src/brand.js (see putEntries). */
+export const putBrand = (text, raw) => putEntries(text, 'src/brand.js', KEYS, brandEntries(raw));
