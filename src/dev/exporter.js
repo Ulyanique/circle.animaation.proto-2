@@ -199,16 +199,18 @@ export function startExporter(player, stage, openNow = false) {
     panel.classList.toggle('busy', busy);
     if (![...el.size.options].some((o) => o.value === opt.size)) option(el.size, opt.size, opt.size.replace('x', '×'));
     if (![...el.fps.options].some((o) => o.value === String(opt.fps))) option(el.fps, opt.fps, String(opt.fps));
-    el.size.value = opt.size; el.fps.value = String(opt.fps); el.level.value = String(opt.level); el.sound.checked = opt.sound;
+    // звук выключен в src/sound.js: галочка «со звуком» не действует, файл выходит тихим
+    const silent = !!SOUND.off;
+    el.size.value = opt.size; el.fps.value = String(opt.fps); el.level.value = String(opt.level); el.sound.checked = silent ? false : opt.sound;
     for (const o of el.format.options) o.disabled = support[o.value] === false;
     el.format.value = fmt ?? opt.format;
-    for (const node of [el.size, el.fps, el.level, el.format, el.sound]) node.disabled = busy;
-    // which sound: said when it is not the film's own
-    const which = SOUND.src === OWN_SOUND ? '' : `· ${SOUND.src.split('/').pop()}`;
+    for (const node of [el.size, el.fps, el.level, el.format, el.sound]) node.disabled = busy || (silent && node === el.sound);
+    // which sound: said when it is not the film's own; when src/sound.js says the music is off — that it is off
+    const which = SOUND.off ? '· звук выключен' : SOUND.src === OWN_SOUND ? '' : `· ${(SOUND.src || '').split('/').pop()}`;
     put(el.which, which);
-    el.which.title = which ? `Музыка ролика — ${SOUND.src}: её ставит инструмент «Звук» (S)` : '';
+    el.which.title = SOUND.off ? 'Музыка убрана из ролика (src/sound.js: off: true)' : which ? `Музыка ролика — ${SOUND.src}: её ставит инструмент «Звук» (S)` : '';
     const frames = frameCount(1, LAST_FRAME, opt.fps), length = frames / opt.fps;
-    const bytes = ((bitrate() + (opt.sound ? soundBitrate(fmt ?? opt.format) : 0)) * length) / 8;
+    const bytes = ((bitrate() + (opt.sound && !SOUND.off ? soundBitrate(fmt ?? opt.format) : 0)) * length) / 8;
     // the encoder is asked for so many bits a second and may stay below: a ceiling, not a promise
     put(el.sum, `${frames} кадров · ${decimal(length)} с · ${decimal(bitrate() / 1e6, bitrate() < 1e7 ? 1 : 0)} Мбит/с · до ≈ ${megabytes(bytes)}`);
     el.make.disabled = el.sample.disabled = busy || !encoder || !fmt || !Object.keys(support).length;

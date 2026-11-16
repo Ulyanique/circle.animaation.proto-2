@@ -15,7 +15,7 @@ import { FILM_END, OWN_SOUND, gainAt, soundSettings } from '../core/soundSetting
 import { showSound, soundFile } from '../core/soundtrack.js';
 import { DURATION, FPS, clamp } from '../core/util.js';
 import { MAX_UPLOAD, safeName } from './mediaLine.js';
-import { SOUND_FILE, soundBlock, soundEntries, tidySound } from './soundLine.js';
+import { SOUND_FILE, SOUND_OFF_ENTRY, soundBlock, soundEntries, tidySound } from './soundLine.js';
 import { addStyle, audioDragged, claim, dropTool, hudButton, landed, megabytes, releaseKeys, takesMusic, tool, toolOpen } from './panel.js';
 
 const FILM_H = 58, GAP = 8, MUSIC_H = 26;      // the two strips, CSS px
@@ -138,7 +138,7 @@ export function startSounder(player, openNow = false) {
   const length = () => (wave?.src === now.src && wave.seconds ? wave.seconds : Number.isFinite(player.audio?.duration) && player.audio.duration > 0 ? player.audio.duration : null);
   /** Reads the music for its picture (again, if the file was replaced under its name). */
   function look(anew = false) {
-    if (!open || (wave?.src === now.src && !anew)) return;
+    if (!open || now.off || (wave?.src === now.src && !anew)) return;      // звук выключен: музыку не читать
     const src = now.src, mine = (wave = { src });
     loudness(urlOf(src)).then((got) => { if (wave === mine) wave = { src, ...got }; }, () => { if (wave === mine) wave = { src, failed: true }; }).then(refresh);
   }
@@ -193,7 +193,7 @@ export function startSounder(player, openNow = false) {
     await Promise.all([ask(), landed(`media/${data.name}`)]);      // (the dev server needs a moment before it serves a new file)
     const what = [data.replaced && 'заменил прежний файл с этим именем', more && 'из нескольких файлов взят первый'].filter(Boolean);
     // (a file of this name may have sounded before: it is read again)
-    edit({ src: `media/${data.name}`, start: 0 }, `${data.name} — музыка ролика${what.length ? ` (${what.join('; ')})` : ''}.`, true);
+    edit({ src: `media/${data.name}`, start: 0, off: false }, `${data.name} — музыка ролика${what.length ? ` (${what.join('; ')})` : ''}.`, true);
   }
 
   // ---- the strips -----------------------------------------------------------------------------------
@@ -312,18 +312,19 @@ export function startSounder(player, openNow = false) {
   const put = (node, text) => { if (node.textContent !== text) node.textContent = text; };
   function say(text, isBad = false) { note = text; bad = isBad; refresh(); }
   function fillList() {
-    const key = JSON.stringify([now.src, server.files]);
+    const key = JSON.stringify([now.src, now.off, server.files]);
     if (key === listKey) return;
     listKey = key;
     el.src.textContent = '';
     const add = (value, label) => el.src.appendChild(Object.assign(document.createElement('option'), { value, textContent: label }));
-    add(OWN_SOUND, 'звук исходного ролика');
+    add(SOUND_OFF_ENTRY, 'звук выключен (off: true)');
     if (now.src !== OWN_SOUND && !server.files.some((f) => `media/${f.name}` === now.src)) add(now.src, now.src);
     for (const f of server.files) add(`media/${f.name}`, `${f.name} · ${megabytes(f.size)}`);
-    el.src.value = now.src;
+    el.src.value = now.off ? SOUND_OFF_ENTRY : now.src;
   }
   /** Where the music lies under the film, in words. */
   function where() {
+    if (now.off) return 'звук выключен — в src/sound.js написано off: true';
     const total = length(), s = now.start;
     if (total === null) return wave?.failed ? '' : 'читаю музыку…';
     const out = [`музыка ${clock(total)}`];
@@ -405,7 +406,7 @@ export function startSounder(player, openNow = false) {
       const picked = el.input.files[0];
       el.input.value = '';
       if (picked) upload(picked);
-    } else if (a === 'src') { listKey = ''; edit({ src: e.target.value, start: 0 }); }      // another music: from its beginning
+    } else if (a === 'src') { listKey = ''; if (e.target.value === SOUND_OFF_ENTRY) edit({ off: true }); else edit({ src: e.target.value, start: 0, off: false }); }      // another music: from its beginning; или выключение звука
     else if (a === 'start') { el.start.value = String(now.start); refresh(); }           // the field is left: the number as it will be written
   });
   releaseKeys(panel);

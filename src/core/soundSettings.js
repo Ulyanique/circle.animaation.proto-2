@@ -19,7 +19,8 @@ const number = (v, d, lo, hi) => {
 };
 
 /**
- * -> { src, start, volume, fadeIn, fadeOut }
+ * -> { off, src, start, volume, fadeIn, fadeOut }
+ *   off       true — музыка убрана: ни на странице, ни в файле-ролике музыки нет (так сейчас и стоит в src/sound.js)
  *   src       the file, under public/ (or a full address)
  *   start     the second of the music that sounds at the film's first frame; negative: the music comes in that much later
  *   volume    0…1
@@ -28,7 +29,9 @@ const number = (v, d, lo, hi) => {
  */
 export function soundSettings(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
+  const off = s.off === true;
   return {
+    off,
     src: typeof s.src === 'string' && s.src.trim() ? s.src.trim() : OWN_SOUND,
     start: number(s.start, 0, -FILM_END, MAX_START),
     volume: number(s.volume, 1, 0, 1),

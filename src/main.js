@@ -4,7 +4,7 @@ import { Stage } from './core/stage.js';
 import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame, touch, touched } from './core/util.js';
 import { loadAssets, restorePhotos } from './core/assets.js';
 import { syncVideos, finishSlots } from './core/slots.js';
-import { soundtrack } from './core/soundtrack.js';
+import { soundtrack, SOUND } from './core/soundtrack.js';
 import { buildShots, linkShots, FOOTAGE } from './shots/index.js';
 import { makeHero } from './fx/hero.js';
 import { TITLE } from './fx/title.js';
@@ -208,6 +208,7 @@ layout();
 
 // ---- HUD ------------------------------------------------------------------------------------
 const playBtn = $('play'), seekEl = $('seek'), clockEl = $('clock'), soundBtn = $('sound');
+if (SOUND.off) soundBtn.hidden = true;      // музыка убрана из ролика (src/sound.js: off: true)
 let hudTimer = 0;
 function showHud() {
   stageEl.classList.add('show-hud');
@@ -228,7 +229,7 @@ soundBtn.addEventListener('click', () => { player.setSound(!player.sound); showH
 seekEl.addEventListener('input', () => { player.seek((Number(seekEl.value) / 1000) * DURATION); showHud(); });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); player.toggle(); }
-  else if (e.code === 'KeyM') player.setSound(!player.sound);
+  else if (e.code === 'KeyM' && !SOUND.off) player.setSound(!player.sound);
   else if (e.code === 'KeyB') setScope(!scope);
   else if (e.code === 'ArrowRight') player.seek(player.time + (e.shiftKey ? 1 / FPS : 1));
   else if (e.code === 'ArrowLeft') player.seek(player.time - (e.shiftKey ? 1 / FPS : 1));
