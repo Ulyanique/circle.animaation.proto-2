@@ -49,20 +49,26 @@ function place(t) {
   setLevel(t);
 }
 
+function makeEl() {
+  const a = new Audio(urlOf(SOUND.src));
+  a.preload = 'auto';
+  a.muted = true;
+  a.preservesPitch = false;      // the clock's tiny rate trims must not go through a time-stretcher
+  a.addEventListener('ended', () => { out = true; });
+  // a file that is not there, or that this browser does not play: the film runs on without sound, and says why
+  a.addEventListener('error', () => console.warn(`sound: ${SOUND.src} cannot be played${a.error?.message ? ` (${a.error.message})` : ''}`));
+  a.addEventListener('loadedmetadata', () => place(filmTime()));      // its length is known now
+  return a;
+}
+
 export const soundtrack = {
-  /** The <audio> element, or null before `open`. */
+  /** The <audio> element, or null before `open`, and when src/sound.js says the music is off. */
   get el() { return el; },
   /** `time()`: the film's second. The element is made here, muted until the user turns the sound on. */
   open(time) {
     filmTime = time;
-    el = new Audio(urlOf(SOUND.src));
-    el.preload = 'auto';
-    el.muted = true;
-    el.preservesPitch = false;      // the clock's tiny rate trims must not go through a time-stretcher
-    el.addEventListener('ended', () => { out = true; });
-    // a file that is not there, or that this browser does not play: the film runs on without sound, and says why
-    el.addEventListener('error', () => console.warn(`sound: ${SOUND.src} cannot be played${el.error?.message ? ` (${el.error.message})` : ''}`));
-    el.addEventListener('loadedmetadata', () => place(filmTime()));      // its length is known now
+    if (SOUND.off) return null;      // музыка убрана из ролика: на странице тишина (src/sound.js: off: true)
+    el = makeEl();
     return el;
   },
   /** The film was put on second `t`. */
@@ -111,7 +117,12 @@ export function showSound(next, anew = false) {
   const s = soundSettings(next), swap = anew || s.src !== SOUND.src, moved = swap || s.start !== SOUND.start;
   SOUND = s;
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('sound-shown', { detail: s }));      // (the dev server's video tool names the music)
-  if (!el) return;
+  if (s.off) {      // тишина, и файл-ролик молчит: музыку убрали в src/sound.js
+    if (el) { el.pause(); el.removeAttribute('src'); el.load(); el = null; }
+    level = -1; out = false;
+    return;
+  }
+  if (!el) { el = makeEl(); level = -1; place(filmTime()); return; }      // музыка вернулась: элемент делается заново
   if (swap) {
     el.pause();
     // (a browser keeps the sound it has played by address: a file replaced under its name is asked for under another)

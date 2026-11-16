@@ -178,6 +178,33 @@ export class ShardBuilder {
     return this;
   }
 
+  /** Grounding fins: hang a vertical curtain from the polygon's LOWEST chain of edges down to `ground` — the plinth
+   *  a monolith grows into the rock. Deliberately NOT from every edge: a full extrusion would lie coplanar with a
+   *  vertical face and z-fight the face itself (and hang like a slab's own twin). Colour is near-black gold. */
+  addSkirt(verts, o = {}) {
+    const ground = o.ground;
+    if (!(ground < Infinity)) return this;
+    const color = o.color || [0.045, 0.035, 0.016];
+    let low = Infinity, high = -Infinity;
+    for (const v of verts) { low = Math.min(low, v.y); high = Math.max(high, v.y); }
+    const tol = (high - low) * 0.02 + 0.02;
+    for (let i = 0; i < verts.length; i++) {
+      const a = verts[i], b = verts[(i + 1) % verts.length];
+      if (Math.max(a.y, b.y) > low + tol) continue;    // only the bottom chain of the silhouette
+      if (a.y <= ground && b.y <= ground) continue;    // already standing on the rock
+      let dx = b.x - a.x, dz = b.z - a.z;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-4) continue;                        // vertical edge: its curtain has no width
+      dx /= len; dz /= len;
+      const n = new THREE.Vector3(dz, 0, -dx);         // horizontal normal of the curtain
+      const a2 = new THREE.Vector3(a.x, Math.min(ground, a.y), a.z);
+      const b2 = new THREE.Vector3(b.x, Math.min(ground, b.y), b.z);
+      this._tri(a, a2, b2, n, color, 0, 3);
+      this._tri(a, b2, b, n, color, 0, 3);
+    }
+    return this;
+  }
+
   /**
    * Closed faceted solid: an irregular prism/crystal made of stacked rings.
    * rings: [{ y, r, dx, dz, twist }] bottom to top (r = 0 makes a point); sides: number of sides.
@@ -274,6 +301,10 @@ uniform float uLightRange;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uMirror;       // 1 when rendering the floor reflection (clip below the floor)
+uniform float uMirrorY;      // world height of the mirror plane: the reflected copy is only drawn below it
+uniform float uTime;         // seconds, for the shimmer of the gold
+uniform float uRim;          // strength of the rim light (the hot halo on the silhouettes)
+uniform float uSpark;        // strength of the view-dependent glitter
 
 uniform sampler2D uTexA;
 uniform sampler2D uTexB;
@@ -292,6 +323,8 @@ uniform float uScrFixed[2];  // 1: own media is fixed to the picture and the win
 // Photos are decoded from sRGB by the GPU. Video frames are not — three.js uploads them as plain RGBA8 (an sRGB upload
 // of a video frame is slow in browsers) and leaves the decoding to the shader.
 vec3 texel(int i, sampler2D tex, vec2 uv) {
+  // a positive LOD bias samples a blurrier mip: at grazing angles the source footage's regular lattice (fences,
+  // towers) would otherwise alias into a shimmering cross-hatch
   vec3 c = texture2D(tex, uv).rgb;
   if (uScrOwn[i] > 1.5) c = mix(pow(c * 0.9478672986 + 0.0521327014, vec3(2.4)), c * 0.0773993808, vec3(lessThanEqual(c, vec3(0.04045))));
   return c;
@@ -327,35 +360,48 @@ vec3 footage(int i, sampler2D tex) {
 }
 
 void main() {
-  if (uMirror > 0.5 && vWorld.y > 0.0) discard;
+  if (uMirror > 0.5 && vWorld.y > uMirrorY) discard;
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorld);
   if (dot(N, V) < 0.0) N = -N;
 
   // tone of the facet, with a soft view dependent gradient so big flat faces are not dead flat
   vec3 R = reflect(-V, N);
-  float sheen = 0.5 + 0.5 * sin(R.x * 2.3 + R.y * 3.1 + 0.6);
+  float sheen = 0.5 + 0.5 * sin(R.x * 2.3 + R.y * 3.1 + 0.6 + uTime * 0.45);
   vec3 col = vColor * uLevel * mix(1.0, 0.55 + 0.9 * sheen, uSheen);
 
-  // flare heads act as small point lights
+  // curtain walls (aScreen = 3) are matte rock: no point lights, no specular, no glitter — just a dark monolith shaft
   vec3 lit = vec3(0.0);
-  for (int i = 0; i < 3; i++) {
-    vec3 L = uLights[i].xyz - vWorld;
-    float d2 = dot(L, L);
-    L *= inversesqrt(d2 + 1e-5);
-    float att = uLights[i].w / (1.0 + d2 / (uLightRange * uLightRange));
-    float ndl = max(dot(N, L), 0.0);
-    float spec = pow(max(dot(N, normalize(L + V)), 0.0), 24.0);
-    lit += uLightColor * att * (ndl * 0.85 + spec * 0.6);
-  }
-  float lum = max(max(vColor.r, vColor.g), vColor.b);
-  col += lit * (vColor / max(lum, 1e-3)) * (0.25 + 0.75 * smoothstep(0.0, 0.25, lum));
+  if (vScreen < 2.5) {
+    for (int i = 0; i < 3; i++) {
+      vec3 L = uLights[i].xyz - vWorld;
+      float d2 = dot(L, L);
+      L *= inversesqrt(d2 + 1e-5);
+      float att = uLights[i].w / (1.0 + d2 / (uLightRange * uLightRange));
+      float ndl = max(dot(N, L), 0.0);
+      float spec = pow(max(dot(N, normalize(L + V)), 0.0), 24.0);
+      lit += uLightColor * att * (ndl * 0.85 + spec * 0.6);
+    }
+    float lum = max(max(vColor.r, vColor.g), vColor.b);
+    col += lit * (vColor / max(lum, 1e-3)) * (0.25 + 0.75 * smoothstep(0.0, 0.25, lum));
 
-  // lit chamfers (on screen faces the attribute carries a per-facet dimming factor instead)
-  if (vScreen < 0.5) col += uGlowColor * vGlow * uGlowLevel;
+    // lit chamfers (on screen faces the attribute carries a per-facet dimming factor instead)
+    if (vScreen < 0.5) col += uGlowColor * vGlow * uGlowLevel;
+
+    // rim light: a hot halo where the light grazes the silhouette — monolith against the dark
+    float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    col += uGlowColor * rim * uRim * (0.25 + 0.75 * smoothstep(0.6, 1.4, uLevel + vGlow));
+
+    // glitter: a few needle-bright cells of a fine hash lattice flare up and fade over time — sparks, not confetti.
+    // Only gold that already catches some light can throw sparks.
+    vec3 gq = floor(R * 90.0);
+    float gh = fract(sin(dot(gq, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+    float tw = pow(max(sin(uTime * (1.6 + gh * 3.2) + gh * 6.2831), 0.0), 180.0);
+    col += uGlowColor * tw * uSpark * step(0.78, gh) * smoothstep(0.1, 0.45, lum * uLevel);
+  }
 
   // footage on screen facets
-  if (vScreen > 0.5) {
+  if (vScreen > 0.5 && vScreen < 2.5) {
     vec3 f = vScreen < 1.5 ? footage(0, uTexA) : footage(1, uTexB);
     // the keyed reveal is perceptual: mixing in linear light with the key itself would put most of the visible change
     // into the first frame or two (the footage would pop in and then barely move)
@@ -389,8 +435,12 @@ export function makeShardMaterial() {
       uFogColor: { value: new THREE.Color(0, 0, 0) },
       uFogDensity: { value: 0 },
       uMirror: { value: 0 },
+      uMirrorY: { value: 0 },
+      uTime: { value: 0 },
+      uRim: { value: 0.55 },
+      uSpark: { value: 0 },
       uTexel: { value: [new THREE.Vector2(1 / 1024, 1 / 1024), new THREE.Vector2(1 / 1024, 1 / 1024)] },
-      uSharp: { value: [0.6, 0.6] },
+      uSharp: { value: [0, 0] },
       uScrOwn: { value: [0, 0] },
       uScrFixed: { value: [0, 0] },
       uTexA: { value: dummyTex },

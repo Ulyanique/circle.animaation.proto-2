@@ -133,7 +133,7 @@ const { soundSettings, gainAt, untouched, OWN_SOUND, FILM_END, MAX_FADE, MAX_STA
 const { tidySound, soundEntries, soundBlock, cleanSound, putSound, SOUND_FILE, SOUND_KEYS } = await import(`${repo}src/dev/soundLine.js`);
 const near = (name, got, want, by = 1e-9) => { checks++; if (!(Math.abs(got - want) <= by)) { failed++; console.log(`FAIL ${name}\n   got  ${got}\n   want ${want}`); } };
 const sounds = (raw) => soundEntries(raw).map(([k, v]) => `${k}: ${v},`);
-const OWN = { src: 'audio.m4a', start: 0, volume: 1, fadeIn: 0, fadeOut: 0 };
+const OWN = { off: false, src: 'audio.m4a', start: 0, volume: 1, fadeIn: 0, fadeOut: 0 };
 
 // ---- what the settings mean
 eq('sound: the film ends at 1213 / 24 s', FILM_END, 1213 / 24);
@@ -143,7 +143,7 @@ for (const raw of [undefined, null, {}, 'music.mp3', 7, [], { src: '', start: 'x
 eq('sound: the own soundtrack is untouched', untouched(soundSettings({})), true);
 for (const raw of [{ start: 0.5 }, { volume: 0.9 }, { fadeIn: 1 }, { fadeOut: 1 }]) eq(`sound: touched: ${JSON.stringify(raw)}`, untouched(soundSettings(raw)), false);
 eq('sound: music of one\'s own, as it is, is untouched too', untouched(soundSettings({ src: 'media/m.mp3' })), true);
-eq('sound: values are kept', soundSettings({ src: ' media/m.mp3 ', start: 12.5, volume: 0.8, fadeIn: 1.5, fadeOut: 3 }), { src: 'media/m.mp3', start: 12.5, volume: 0.8, fadeIn: 1.5, fadeOut: 3 });
+eq('sound: values are kept', soundSettings({ src: ' media/m.mp3 ', start: 12.5, volume: 0.8, fadeIn: 1.5, fadeOut: 3 }), { off: false, src: 'media/m.mp3', start: 12.5, volume: 0.8, fadeIn: 1.5, fadeOut: 3 });
 eq('sound: numbers written as text count', soundSettings({ start: '-3', volume: '0.5' }), { ...OWN, start: -3, volume: 0.5 });
 eq('sound: values out of range are brought into it', soundSettings({ start: -1000, volume: 3, fadeIn: -1, fadeOut: 99 }), { ...OWN, start: -FILM_END, volume: 1, fadeIn: 0, fadeOut: MAX_FADE });
 eq('sound: … at the other end', soundSettings({ start: 1e9, volume: -2 }), { ...OWN, start: MAX_START, volume: 0 });
@@ -166,10 +166,13 @@ eq('sound: … at the other end', soundSettings({ start: 1e9, volume: -2 }), { .
 }
 
 // ---- the lines
+eq('sound: off alone writes one line and turns the music off', sounds({ off: true }), ['off: true,']);
+eq('sound: off is kept as it is', soundSettings({ off: true }).off, true);
+eq('sound: off does not touch the settings it carries', soundSettings({ off: true, volume: 0.3 }), { ...OWN, off: true, volume: 0.3 });
 eq('sound: the own soundtrack, untouched, writes nothing', sounds({}), []);
 eq('sound: defaults are left out', sounds({ src: 'media/m.mp3', start: 0, volume: 1, fadeIn: 0, fadeOut: 0 }), ["src: 'media/m.mp3',"]);
 eq('sound: all the lines, in their order', sounds({ fadeOut: 2, fadeIn: 0.5, volume: 0.8, start: 12.5, src: 'media/m.mp3' }), ["src: 'media/m.mp3',", 'start: 12.5,', 'volume: 0.8,', 'fadeIn: 0.5,', 'fadeOut: 2,']);
-eq('sound: the order of the keys is the order of the lines', SOUND_KEYS, ['src', 'start', 'volume', 'fadeIn', 'fadeOut']);
+eq('sound: the order of the keys is the order of the lines', SOUND_KEYS, ['off', 'src', 'start', 'volume', 'fadeIn', 'fadeOut']);
 eq('sound: rounding — a millisecond of place, a hundredth of the rest', sounds({ start: 12.34567, volume: 0.8049, fadeIn: 1.005001, fadeOut: 2.999 }), ['start: 12.346,', 'volume: 0.8,', 'fadeIn: 1.01,', 'fadeOut: 3,']);
 eq('sound: a negative place', sounds({ start: -3 }), ['start: -3,']);
 eq('sound: what rounds to the default has no line (and no minus zero)', sounds({ start: -0.0004, volume: 0.999, fadeIn: 0.004 }), []);
@@ -184,10 +187,11 @@ for (const raw of [{}, { src: 'media/Музыка (2).mp3', start: 73.25, volume
 
 // ---- validation, file names
 eq('sound: clean keeps the known keys only', cleanSound({ src: 'media/m.mp3', start: 1, volume: 0.5, fadeIn: 1, fadeOut: 2, evil: 'x', loop: true }), { src: 'media/m.mp3', start: 1, volume: 0.5, fadeIn: 1, fadeOut: 2 });
+eq('sound: clean keeps off, and only a boolean off', cleanSound({ off: true, evil: 'x' }), { off: true });
 eq('sound: clean — nothing set is nothing', cleanSound({}), {});
 for (const [what, raw] of [['no settings', null], ['text', 'media/m.mp3'], ['src is a number', { src: 5 }], ['src is empty', { src: '' }], ['src with a line break', { src: 'a.mp3\n};' }], ['src with a template', { src: 'a${x}.mp3' }],
   ['src with a back-tick', { src: 'a`.mp3' }], ['src with a backslash', { src: 'a\\.mp3' }], ['src too long', { src: 'a'.repeat(301) }], ['start is text', { start: '3' }], ['volume is NaN', { volume: NaN }],
-  ['fadeIn is infinite', { fadeIn: Infinity }], ['fadeOut is null', { fadeOut: null }]]) {
+  ['fadeIn is infinite', { fadeIn: Infinity }], ['fadeOut is null', { fadeOut: null }], ['off is text', { off: 'true' }], ['off is a number', { off: 1 }]]) {
   throws(`sound: refused — ${what}`, () => cleanSound(raw));
 }
 for (const good of ['song.mp3', 'Музыка (2).M4A', 'a.aac', 'a.wav', 'a.ogg', 'a.oga', 'a.opus', 'a.flac']) eq(`sound: a music file: ${good}`, safeName(good, SOUND_FILE), good);
@@ -197,10 +201,13 @@ for (const bad of ['film.mp4', 'film.webm', 'page.html', 'song.mp3.exe', 'song.m
 const soundFileText = readFileSync(`${repo}src/sound.js`, 'utf8');
 const shead = soundFileText.slice(0, soundFileText.indexOf('export default {'));
 const sbody = (...lines) => `${shead}export default {\n${lines.map((l) => `${l}\n`).join('')}};\n`;
+const offFile = sbody('  off: true,');
 const empty = sbody("  // src: 'media/music.mp3',", '  // start: 12.5,', '  // fadeOut: 2,');
 const all = { src: 'media/m.mp3', start: 12.5, volume: 0.8, fadeIn: 0.5, fadeOut: 2 };
-eq('sound: the file as it comes is the empty one', soundFileText, empty);
-eq('sound: the empty file says: the own soundtrack', soundSettings(await load(soundFileText)), OWN);
+eq('sound: the file as it comes says the music is off', soundFileText, offFile);
+eq('sound: the off file says: the music is off', soundSettings(await load(soundFileText)), { ...OWN, off: true });
+eq('sound: the off file asks for no music in a file-made film either', soundEntries(await load(soundFileText)), [['off', 'true']]);
+eq('sound: the off file loses its off line when it is set back to the defaults', putSound(offFile, {}), sbody());
 eq('sound: nothing to say — the file stays as it is', putSound(empty, {}), empty);
 let sf = putSound(empty, all);
 eq('sound: lines are added in their order, each before its commented-out example',

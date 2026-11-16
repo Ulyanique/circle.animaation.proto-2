@@ -231,6 +231,24 @@ export function makeShot(def, data, assets) {
     });
   }
   def.build?.(builder, { rig, data, THREE });
+  // ---- the ground -------------------------------------------------------------------------
+  // The world under the film: one dark polished plain per shot, placed just below the lowest thing the shot
+  // shows (the camera never flies under it). Every solid facet is then grown a curtain wall down to that plain,
+  // so no plate floats in the air — the gold stands on the rock the way monoliths do. `def.floor: false` opts out;
+  // `def.floor: { y, reflect, opacity, color }` overrides. Soft light-cards get no curtain: they are light, not matter.
+  let low = Infinity;
+  for (const p of data.polys || []) for (const v of p.v) low = Math.min(low, v[1]);
+  const floorY = def.floor?.y ?? (Number.isFinite(low) ? low + 0.35 : -17.5);
+  if (def.floor !== false) {
+    for (const p of data.polys || []) {
+      const o = def.polys?.[p.id] || {};
+      if (o.skip || p.soft) continue;
+      const tone = o.tone || p.tone || [70, 55, 28];
+      builder.addSkirt(p.v.map((a) => new THREE.Vector3(a[0], a[1], a[2])), {
+        ground: floorY, color: rgb255(tone[0], tone[1], tone[2]).map((c) => c * 0.14),
+      });
+    }
+  }
   const material = makeShardMaterial();
   const mesh = new THREE.Mesh(builder.build(), material);
   mesh.frustumCulled = false;
@@ -251,20 +269,22 @@ export function makeShot(def, data, assets) {
   if (def.sheen != null) U.uSheen.value = def.sheen;
   if (def.lightRange) U.uLightRange.value = def.lightRange;
 
-  // optional mirrored copy under a glossy floor
+  // the mirrored copy under the glossy floor, and the floor itself
   let mirror = null;
-  if (def.floor) {
+  if (def.floor !== false) {
     mirror = new THREE.Mesh(mesh.geometry, makeShardMaterial());
     mirror.scale.y = -1;
+    mirror.position.y = 2 * floorY;                    // fold the world about the floor plane, not about y = 0
     mirror.frustumCulled = false;
     mirror.material.uniforms.uMirror.value = 1;
-    mirror.material.uniforms.uLevel.value = 0.35;
+    mirror.material.uniforms.uMirrorY.value = floorY;
     group.add(mirror);
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(400, 400),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(...(def.floor.color || [0.012, 0.01, 0.006])), transparent: true, opacity: def.floor.opacity ?? 0.8 }),
+      new THREE.PlaneGeometry(1400, 1400),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(...(def.floor?.color || [0.012, 0.01, 0.006])), transparent: true, opacity: def.floor?.opacity ?? 0.78, depthWrite: false }),
     );
     floor.rotation.x = -Math.PI / 2;
+    floor.position.y = floorY;
     floor.renderOrder = 1;
     group.add(floor);
   }
@@ -452,11 +472,13 @@ export function makeShot(def, data, assets) {
         o.mat.uniforms.uLevel.value = o.mat.uniforms.uGlowLevel.value = o.level(f);
         o.mat.uniforms.uOpacity.value = o.opacity(f);
       }
+      U.uTime.value = time;
       if (mirror) {
         const MU = mirror.material.uniforms;
         MU.uLights.value = U.uLights.value;
-        MU.uLevel.value = level(f) * (def.floor.reflect ?? 0.35);
-        MU.uGlowLevel.value = glow(f) * (def.floor.reflect ?? 0.35);
+        MU.uTime.value = time;
+        MU.uLevel.value = level(f) * (def.floor?.reflect ?? 0.55);
+        MU.uGlowLevel.value = glow(f) * (def.floor?.reflect ?? 0.7);
       }
       stage.post.exposure = exposure(f);
       stage.post.flash = flash(f);

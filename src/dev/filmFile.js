@@ -37,6 +37,7 @@ export function pictureBitrate(width, height, fps, level = 1) {
  * anything else is encoded, as stereo.
  */
 export function soundBitrate(format, music = SOUND) {
+  if (music?.off) return 0;
   const codec = FORMATS[format]?.sound ?? 'opus';
   return codec === 'aac' && music.src === OWN_SOUND && untouched(music) ? AAC_BITRATE : ENCODED[codec] * 2;
 }
@@ -230,7 +231,7 @@ export async function filmFile(player, stage, { width, height, fps = FPS, format
   const picture = new mb.CanvasSource(canvas, { codec: kind.codec, quality: new mb.Quality({ bitrate }), keyFrameInterval: 1, latencyMode: 'quality' });
   output.addVideoTrack(picture, { frameRate: fps, maximumPacketCount: frames + 8 });
   let track = null, soundError = null;
-  if (sound) {
+  if (sound && !music?.off) {      // src/sound.js: off — файл-ролик выходит без звука
     try { track = await openSound(mb, music, format, t0, t1); } catch (e) { soundError = e; }
     if (track) output.addAudioTrack(track.source, { maximumPacketCount: track.most });
   }
