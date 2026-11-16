@@ -17,7 +17,7 @@ export function orbitLayout(fov,aspect,scale=1){
  const halfHeight=Math.tan(THREE.MathUtils.degToRad(fov/2))*24;
  const halfWidth=halfHeight*aspect;
  // Keep the centre clear even on portrait displays: ornaments become smaller.
- const size=Math.min(1,aspect/.95)*scale*1.4;
+ const size=Math.min(1,aspect/.95)*scale*1.85;
  return {halfWidth,halfHeight,size};
 }
 

@@ -1,3 +1,4 @@
+import { exportFullHd, seekExportVideos } from './video-export.js';
 import { createGraphiteBackdrop } from './graphite-backdrop.js';
 import { capturePng, downloadFrame, frameFilename } from './frame-export.js';
 import { mountCinemaView } from './cinema-view.js';
@@ -37,6 +38,7 @@ const settings=loadSettings(savedStorage);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const mobile = matchMedia('(pointer: coarse)').matches;
 let assetsReady = false;
+let videoExportActive=false;
 const assetManager = new THREE.LoadingManager();
 const $ = (s) => document.querySelector(s);
 let renderer;
@@ -351,7 +353,7 @@ function render(t, dt=1/60){
  depthOfField.uniforms.aperture.value = lerp(0.00007, 0.000025, finish);
  camera.rotateZ(settings.cameraRoll?pose[6]*(1-finish):0);
  camera.updateMatrixWorld();
- camera.fov=mediaPlaybackFov(t,innerWidth<700)+settings.fovOffset;camera.updateProjectionMatrix();
+ camera.fov=mediaPlaybackFov(t,camera.aspect<1)+settings.fovOffset;camera.updateProjectionMatrix();
  trail.visible=settings.beam&&settings.tail;
  const snakeVisibility=settings.beam?beamEnvelope(t):0;
  ribbons.forEach((r,i)=>{r.material.opacity=snakeVisibility*settings.tailStrength*(i===0?.72:.28);});
@@ -453,11 +455,13 @@ function closeReference(){$('#reference video').pause();$('#reference').hidden=t
 $('#close-reference').onclick=closeReference;
 window.addEventListener('keydown',e=>{if(e.code==='Escape'){if(!$('#reference').hidden)closeReference();else if(!$('#chapters-menu').hidden)toggleChapters(false);else if(!$('#media-menu').hidden)toggleMedia(false);}if(e.target.closest('input,button,video,select,textarea,[contenteditable=true]'))return;if(e.code==='Space'){e.preventDefault();setPlaying(!playing);}if(e.code==='ArrowRight')time=Math.min(DURATION,time+5);if(e.code==='ArrowLeft')time=Math.max(0,time-5);});
 window.addEventListener('resize',()=>{
+ if(videoExportActive)return;
  let changed=false;for(const panel of panels)changed=panel.setViewportAspect(innerWidth/innerHeight)||changed;
  if(changed)rebuildSnakePath();
  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);});
 renderer.setAnimationLoop(now=>{
  const dt=Math.min((now-last)/1000,.1);last=now;
+ if(videoExportActive)return;
  if(assetsReady&&!document.hidden){
   time+=playbackTempo.step(dt,settings.speed,playing);
   if(playing&&time>DURATION){if(settings.loop)time=0;else{time=DURATION;setPlaying(false);}}
@@ -562,6 +566,7 @@ for(const eventName of ['input','change','pointerleave','keydown']){
 window.addEventListener('resize',()=>invalidateScene());
 document.addEventListener('visibilitychange',()=>{
  last=performance.now();
+ if(videoExportActive)return;
  invalidateScene();
  for(const panel of panels)panel.syncVideo(time,playing,!document.hidden);
 });
@@ -590,4 +595,33 @@ $('#frame-export').onclick=async()=>{
   status.textContent=`Кадр сохранён: ${renderer.domElement.width} × ${renderer.domElement.height} px. Без интерфейса.`;
  }catch(error){status.textContent=error.name==='SecurityError'?'Экспорт недоступен для медиа без разрешения CORS. Загрузите файл с устройства.':error.message||'Не удалось сохранить кадр.';}
  finally{button.disabled=false;invalidateScene();}
+};
+
+
+$('#video-export').onclick=async()=>{
+ if(videoExportActive||!assetsReady)return;
+ const dialog=$('#video-export-dialog'),status=$('#video-export-status'),progress=$('#video-export-progress');
+ const controller=new AbortController(),saved={time,playing,settingsOpen:$('#settings-panel').matches(':popover-open'),ratio:renderer.getPixelRatio(),blends:panels.map(p=>p.sourceBlend),pointer:smoothedPointer.clone(),velocity:pointerVelocity.clone()};
+ const cancel=event=>{event?.preventDefault();controller.abort();status.textContent='Отмена…';};
+ $('#video-export-cancel').onclick=cancel;dialog.oncancel=cancel;
+ videoExportActive=true;setPlaying(false);dialog.showModal();progress.value=0;status.textContent='Подготовка кодировщика…';
+ function size(width,height,ratio){
+  for(const panel of panels)panel.setViewportAspect(width/height);
+  rebuildSnakePath();camera.aspect=width/height;camera.updateProjectionMatrix();
+  renderer.setPixelRatio(ratio);renderer.setSize(width,height);composer.setPixelRatio(ratio);composer.setSize(width,height);sparkMaterial.uniforms.pixelRatio.value=ratio;
+ }
+ try{
+  size(1920,1080,1);smoothedPointer.set(0,0);pointerVelocity.set(0,0);
+  for(const panel of panels)panel.sourceBlend=1;
+  const result=await exportFullHd({duration:DURATION,signal:controller.signal,
+   renderFrame:async(stamp,signal)=>{await seekExportVideos(panels,stamp,signal);time=stamp;render(stamp,0);return renderer.domElement;},
+   onProgress:(done,total)=>{progress.value=done/total;status.textContent=`Кадр ${done} из ${total} · ${Math.round(done/total*100)}%`;},
+  });
+  downloadFrame(result.blob,`amber-full-hd-30fps.${result.extension}`);
+  $('#settings-panel .settings-status').textContent=`Видео сохранено: 1920 × 1080, 30 fps, ${result.frames} кадров. Без звука.`;
+ }catch(error){$('#settings-panel .settings-status').textContent=error.name==='AbortError'?'Экспорт отменён.':`Ошибка экспорта: ${error.message}`;}
+ finally{
+  try{size(innerWidth,innerHeight,saved.ratio);time=saved.time;panels.forEach((panel,i)=>panel.sourceBlend=saved.blends[i]);smoothedPointer.copy(saved.pointer);pointerVelocity.copy(saved.velocity);setPlaying(saved.playing);}
+  finally{videoExportActive=false;last=performance.now();dialog.close();if(saved.settingsOpen)$('#settings-panel').showPopover();invalidateScene();}
+ }
 };

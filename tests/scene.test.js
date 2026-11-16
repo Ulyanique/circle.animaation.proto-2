@@ -352,7 +352,7 @@ test('edge orbit dust is deterministic and camera-relative layout leaves the cen
  for(const aspect of [.46,.65,1.5,1.9]){
   const camera=new PerspectiveCamera(aspect<1?68:46,aspect,.1,320);
   const layout=orbitLayout(camera.fov,aspect);
-  assert.ok(Number.isFinite(layout.halfWidth)&&layout.size<=1.4);
+  assert.ok(Number.isFinite(layout.halfWidth)&&layout.size<=1.85);
   const root=createEdgeOrbits(null);
   root.userData.update(camera,10,{edgeOrbits:true,orbitSize:1,orbitSpeed:1,orbitBrightness:1,orbitParticles:true});
   for(const group of root.children){
@@ -810,4 +810,26 @@ test('graphite background is deterministic distant flat geometry without shimmer
   assert.equal(positions.getZ(i),0);
  }
  a.geometry.dispose();a.material.dispose();b.geometry.dispose();b.material.dispose();
+});
+
+import { exportFramePlan } from '../src/video-export.js';
+test('Full HD export timestamps cover every frame with no gaps or duplicate times',()=>{
+ const plan=exportFramePlan(70.58,30);assert.equal(plan.count,2118);
+ let end=0;for(let i=0;i<plan.count;i++){const frame=plan.frame(i);assert.equal(frame.timestamp,end);end+=frame.duration;assert.equal(frame.time,i/30);}
+ assert.equal(end,70600000);assert.throws(()=>exportFramePlan(1,0));
+});
+
+test('offline video export awaits decoded source seeks instead of sampling an old frame',async()=>{
+ const {seekExportVideos}=await import('../src/video-export.js');
+ class Clip extends EventTarget{
+  duration=120;readyState=2;seeking=false;value=0;paused=false;
+  pause(){this.paused=true;}
+  get currentTime(){return this.value;}
+  set currentTime(value){this.seeking=true;queueMicrotask(()=>{this.value=value;this.seeking=false;this.dispatchEvent(new Event('seeked'));});}
+ }
+ const video=new Clip(),panel={video,revealTime:5,clipIn:85,clipOut:88};
+ await seekExportVideos([panel],7,new AbortController().signal);
+ assert.equal(video.currentTime,87);assert.equal(video.seeking,false);assert.equal(video.paused,true);
+ const abort=new AbortController();abort.abort();video.value=0;
+ await assert.rejects(seekExportVideos([panel],8,abort.signal),error=>error.name==='AbortError');
 });

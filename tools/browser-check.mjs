@@ -56,6 +56,23 @@ try {
     await page.screenshot({path:join(artifacts,filename),timeout:120000});
     frames.push(filename);console.log('Captured',filename);
   }
+  if(process.env.BROWSER_EXPORT_SMOKE==='1'){
+    const result=await page.evaluate(async()=>{
+      const {exportFullHd}=await import('/src/video-export.js');
+      const canvas=document.createElement('canvas');canvas.width=1920;canvas.height=1080;
+      const ctx=canvas.getContext('2d');let rendered=0;
+      const result=await exportFullHd({duration:.1,renderFrame:async time=>{ctx.fillStyle=`rgb(${rendered*80},30,20)`;ctx.fillRect(0,0,1920,1080);rendered++;return canvas;}});
+      return {bytes:Array.from(new Uint8Array(await result.blob.arrayBuffer())),frames:result.frames,rendered,extension:result.extension};
+    });
+    if(result.frames!==3||result.rendered!==3)errors.push('Export omitted frames');
+    await writeFile(join(artifacts,`full-hd-smoke.${result.extension}`),Buffer.from(result.bytes));
+    await page.click('#settings-toggle');await page.click('#video-export');
+    await page.locator('#video-export-dialog[open]').waitFor();
+    await page.click('#video-export-cancel');
+    await page.waitForFunction(()=>!document.querySelector('#video-export-dialog').open);
+    await page.click('#settings-close');
+    console.log(`Full HD encoder: ${result.frames} frames, ${result.extension}, cancel/restore checked`);
+  }
   if(process.env.BROWSER_FRAME==='1'){
     const playLabel=await page.locator('#play').getAttribute('aria-label');
     await page.click('#settings-toggle');
