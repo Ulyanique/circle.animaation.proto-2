@@ -290,6 +290,8 @@ export function makeShot(def, data, assets) {
   }
 
   // ---- footage screens --------------------------------------------------------------------
+  // a screen's fit / measured uv walk, kept apart from the map below so that a cut adopted late can take them over
+  const scrFit = [], scrUv = [];
   const screens = (data.screens || []).map((s, i) => {
     const sd = def.screens?.[s.name] || {};
     U.uScrO.value[i].fromArray(s.o);
@@ -362,6 +364,20 @@ export function makeShot(def, data, assets) {
         U.uScrU.value[i].copy(Ux).multiplyScalar(b[1] - b[0]);
         U.uScrV.value[i].copy(Vy).multiplyScalar(b[3] - b[2]);
       },
+      // a cut that arrived late (core/slots.js adoptLate) takes the place of the placeholder still on this screen
+      adopt: (tex, fit, fixed) => {
+        const media = tex.userData.media;      // the cut itself (assets.footage is updated by the caller)
+        U[i === 0 ? 'uTexA' : 'uTexB'].value = tex;
+        U.uTexel.value[i].set(1 / media.width, 1 / media.height);
+        U.uScrOwn.value[i] = 2;                 // a video: its pictures change on their own
+        U.uScrFixed.value[i] = fixed ? 1 : 0;
+        const cfg = media.cfg ?? {};
+        U.uSharp.value[i] = clamp(Number(cfg.sharpen) || 0, 0, 1.5);
+        const m = fit(0);
+        U.uScrA.value[i].set(m[0], m[1], m[2], m[3]); U.uScrT.value[i].set(m[4], m[5]);
+        scrFit[i] = fit;                        // the per-frame walk above drives it from now on
+        scrUv[i] = null;
+      },
     });
     if (fit) {
       U.uScrOwn.value[i] = media.kind === 'video' ? 2 : 1;
@@ -373,6 +389,7 @@ export function makeShot(def, data, assets) {
     // the footage glides inside its facet: per-frame uv transform [a, b, c, d, tx, ty] measured by tools/uvtrack.py
     // (it belongs to the placeholder still; custom media has its own `to` move)
     const uv = fit || sd.uv === false || !s.uv ? null : track(s.uv.rows.map((r, k) => [s.uv.f0 + k, r]), 'spline', true);
+    scrFit[i] = fit; scrUv[i] = uv;
     return {
       fit,
       reveal,
@@ -436,8 +453,9 @@ export function makeShot(def, data, assets) {
       if (softMesh) softMesh.material.uniforms.uLevel.value = level(f);
       U.uGlowLevel.value = glow(f);
       screens.forEach((s, i) => {
-        U.uScrMix.value[i].set(s.reveal(f), s.sepia(f), s.gain(f), s.fit ? 0 : s.scroll(f));
-        const m = s.fit ? s.fit(f) : s.uv ? s.uv(f) : null;
+        const fit = scrFit[i], uv = scrUv[i];      // a late cut swaps these under a running film
+        U.uScrMix.value[i].set(s.reveal(f), s.sepia(f), s.gain(f), fit ? 0 : s.scroll(f));
+        const m = fit ? fit(f) : uv ? uv(f) : null;
         if (m) { U.uScrA.value[i].set(m[0], m[1], m[2], m[3]); U.uScrT.value[i].set(m[4], m[5]); }
       });
       res.set(stage.width, stage.height);

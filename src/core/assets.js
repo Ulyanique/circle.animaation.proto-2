@@ -64,6 +64,7 @@ function loadPhoto(loader, cfg) {
 /**
  * A video (src/media.js): muted, parked on the frame its window opens with, driven later by core/slots.js.
  * Resolves to null if it cannot be played — the placeholder then stays.
+ * The returned promise also carries `late()`: see below, it hands the cut over once it has arrived.
  */
 function loadVideo(cfg) {
   const el = document.createElement('video');
@@ -71,37 +72,89 @@ function loadVideo(cfg) {
   el.setAttribute('muted', ''); el.setAttribute('playsinline', '');      // what iOS looks at
   el.preload = 'auto'; el.crossOrigin = 'anonymous'; el.disableRemotePlayback = true;
   el.loop = cfg.loop !== false;
-  return new Promise((resolve) => {
-    let done = false;
+  let settle = () => {};      // defined below: parks the video on the frame its window opens with
+  /**
+   * The film is not held back by a cut that has not arrived, but the cut is not given up on either: until the film
+   * starts the window waits for it (`settle`); after that the window shows its placeholder still and takes the cut as
+   * soon as it can be played — a window is often half a minute of film away, and its cut may still be on the way.
+   * A video that cannot be played at all (a 404, a codec the browser has none of) is a different matter: `late()`
+   * gives up on it after the browser has said so, so it is not met again at every frame.
+   */
+  let done = false, texture = null, handedOver = false;
+  const take = () => {
+    if (texture || !el.videoWidth) return null;
+    el.pause();
+    const t = new THREE.VideoTexture(el);
+    t.colorSpace = THREE.SRGBColorSpace;
+    // mip-mapped like the photos (three.js leaves videos unfiltered by default): a window is often smaller than the
+    // video or seen at an angle, and fine detail would shimmer
+    t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+    t.anisotropy = 16;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    // `fresh()`: the frame the video stands on is taken at the next draw (core/slots.js, settleVideos)
+    t.userData.media = { kind: 'video', cfg, video: el, width: el.videoWidth, height: el.videoHeight, fresh: () => { t.needsUpdate = true; } };
+    texture = t;
+    return t;
+  };
+  /** Parks the video on its opening frame, then hands it over (`onReady`) — or calls `onFail` if it cannot be played. */
+  const park = (onReady, onFail) => {
+    el.pause();
+    const start = cfg.start ?? 0;
+    if (start > 0.01 && Math.abs(el.currentTime - start) > 1e-3) {
+      el.addEventListener('seeked', () => onReady(), { once: true });
+      el.currentTime = start;
+    } else onReady();
+  };
+  const promise = new Promise((resolve) => {
     const finish = (ok) => {
       if (done) return;
       done = true; clearTimeout(timer);
       el.pause();
       if (!ok || !el.videoWidth) { console.warn(`media.js: cannot play ${cfg.src} — the placeholder is shown instead`); resolve(null); return; }
-      const t = new THREE.VideoTexture(el);
-      t.colorSpace = THREE.SRGBColorSpace;
-      // mip-mapped like the photos (three.js leaves videos unfiltered by default): a window is often smaller than the
-      // video or seen at an angle, and fine detail would shimmer
-      t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
-      t.anisotropy = 16;
-      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      // `fresh()`: the frame the video stands on is taken at the next draw (core/slots.js, settleVideos)
-      t.userData.media = { kind: 'video', cfg, video: el, width: el.videoWidth, height: el.videoHeight, fresh: () => { t.needsUpdate = true; } };
-      resolve(t);
+      handedOver = true;
+      resolve(take());
     };
-    // a slow connection must not hold the film back for ever: with the size known the video is taken as it is and
-    // its window stays dark until the first frame arrives
-    const timer = setTimeout(() => finish(el.readyState >= 1), 12000);
-    el.addEventListener('loadeddata', () => {
-      el.pause();
-      const start = cfg.start ?? 0;      // the frame the window opens with must be decoded before the film starts
-      if (start > 0.01) { el.addEventListener('seeked', () => finish(true), { once: true }); el.currentTime = start; } else finish(true);
-    }, { once: true });
+    settle = () => park(() => finish(true), () => finish(false));
+    // a slow connection must not hold the film back for ever: the placeholder still is shown and the cut is adopted
+    // later by `late()` (a video that is already showing a frame is good enough as it is)
+    const timer = setTimeout(() => { if (el.readyState >= 1) finish(true); else { done = true; clearTimeout(timer); resolve(null); } }, 12000);
+    el.addEventListener('loadeddata', () => { if (!done) settle(); }, { once: true });
     el.addEventListener('error', () => finish(false), { once: true });
     el.src = urlOf(cfg.src);
     el.load();
     el.play()?.catch(() => {});      // phones fetch nothing but the header until a video is asked to play
   });
+  /**
+   * The cut arrived after the film had started: `onReady(texture)` is called once it can stand on its opening frame.
+   * Nothing is given up on meanwhile — the window keeps its placeholder still for as long as it takes — and a file the
+   * browser cannot play at all is simply never handed over (the window keeps the still for good).
+   */
+  promise.late = (onReady) => {
+    if (handedOver) return;                       // the film got it already
+    let seeking = false;
+    const attempt = () => {
+      if (handedOver || el.error) return;
+      if (!el.videoWidth) return;                 // nothing decoded yet: the next event brings us back here
+      const start = cfg.start ?? 0;
+      if (start > 0.01 && Math.abs(el.currentTime - start) > 1e-3) {
+        if (seeking) return;                      // one seek at a time
+        seeking = true;
+        el.addEventListener('seeked', () => { seeking = false; attempt(); }, { once: true });
+        el.currentTime = start;
+        return;
+      }
+      el.pause();
+      handedOver = true;
+      const t = take();
+      if (t) onReady(t);
+    };
+    // a slow file fires these several times as more of it arrives; a file that never comes simply never fires them
+    el.addEventListener('loadeddata', attempt);
+    el.addEventListener('canplay', attempt);
+    el.addEventListener('seeked', attempt);
+    attempt();                                    // (it may be ready already)
+  };
+  return promise;
 }
 
 /** The test card of `?card`: a 16:9 frame with named squares (A1 … I16), a circle and a border. */
@@ -237,16 +290,20 @@ function loadTexture(loader, url) {
 /**
  * `toGpu(texture)`: puts a texture on the GPU at once — with it a photo's canvas is given back as soon as it is there.
  * `emblem`: the picture of the title's emblem, if src/brand.js names one.
+ * `late`: screen name -> `late(onReady)` of a cut that had not arrived when the film started (see loadVideo); the
+ * window keeps its placeholder still until it does.
  */
 export async function loadAssets(names, toGpu = null, { emblem = null } = {}) {
   upload = toGpu;
   const loader = new THREE.TextureLoader();
-  const footage = {};
+  const footage = {}, late = {};
   const picture = emblem ? loadEmblem(emblem) : null;
   await Promise.all(names.map(async (n) => {
     const cfg = mediaFor(n);
-    const own = !cfg ? null : CARD ? makeCard(cfg) : await (isVideo(cfg.src) ? loadVideo(cfg) : loadPhoto(loader, cfg));
+    const video = !cfg || CARD || !isVideo(cfg.src) ? null : loadVideo(cfg);
+    const own = !cfg ? null : CARD ? makeCard(cfg) : video ? await video : await loadPhoto(loader, cfg);
+    if (video && !own) late[n] = video.late;      // (a cut that did arrive has nothing to hand over)
     footage[n] = own || await loadTexture(loader, `${base}footage/${n}.jpg`);
   }));
-  return { footage, emblem: await picture };
+  return { footage, emblem: await picture, late };
 }

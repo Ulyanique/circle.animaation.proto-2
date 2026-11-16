@@ -159,6 +159,37 @@ export function finishSlots(links = []) {
 
 const TAIL = 16;      // frames a shot may still be on screen past its own range (the dissolve into the next one)
 
+/**
+ * Gives a window the cut that arrived late (core/assets.js `late()`). Until the film started, a window waited for its
+ * video; a cut that was not there by then left the window on its placeholder still. This puts the window back to what
+ * it would have been had the cut arrived in time: the same placement, the same box, driven by the film's clock.
+ * A window that already has its cut (or has no cut in media.js) is left alone. Returns true if the cut was taken.
+ */
+export function adoptLate(name, texture) {
+  const r = registry[name];
+  if (!r || !texture) return false;
+  const media = texture.userData.media;
+  if (!media) return false;
+  if (r.kind === 'video' && r.src === media.cfg.src) return false;      // it has this very cut already
+  r.kind = 'video'; r.src = media.cfg.src; r.cfg = media.cfg; r.shape = media.width / media.height;
+  r.video = media.video; r.fresh = media.fresh;
+  r.fixed = media.cfg.fixed ?? FIXED[r.id] ?? false;
+  // a window that had no media at all was never fitted to its box: place the cut as registerSlot would have
+  if (!r.place) {
+    r.place = placeOf(media.cfg);
+    r.fixed = media.cfg.fixed ?? FIXED[r.id] ?? false;
+    for (const u of r.users) {
+      u.own = true;
+      u.ask.apply(r.box);          // the part of the window the picture ever shows
+      u.ask.fixed(r.fixed);
+    }
+  }
+  const fit = (f) => { const m = fitMatrix(r.fixed ? VIDEO_W / VIDEO_H : r.aspect, 1, r.shape, placeAt(r, f)); m.fixed = r.fixed; return m; };
+  for (const u of r.users) u.ask.adopt(texture, fit, r.fixed);
+  touch();
+  return true;
+}
+
 /** The moment of its video that a window shows at frame `f`, in seconds, and whether the video runs in a loop. */
 function videoTime(r, f) {
   const dur = r.video.duration;
