@@ -9,10 +9,13 @@ import { glyphStore, makeTitle, onTitle, titleScale, TITLE, TITLE_CENTRE } from 
 import { makeBurst } from '../fx/burst.js';
 
 const centre = track([[963, [665, 375]], [966, [645, 352]], [970, [640, 356]], [1003, [641, 362]]]);
-const flareI = track([[963, 1.5], [966, 2.2], [970, 3.0], [974, 4.0], [979, 3.0], [985, 2.0], [988, 1.4], [991, 0.7], [994, 0.3], [997, 0.12], [1003, 0.03], [1008, 0]]);
-const flareS = track([[963, 1.4], [968, 3.0], [974, 6.0], [982, 4.5], [988, 3.5], [994, 2.4], [1003, 1.5]]);
+// The flare has to hand its light over to the circle the compass draws. It used to be all but out by f1000 (0.03 and
+// falling) while the circle had only just begun to draw and the burst had faded, so the frame sat in a hole between
+// two lights and came out nearly black; it now eases away through f1000–1009 instead.
+const flareI = track([[963, 1.5], [966, 2.2], [970, 3.0], [974, 4.0], [979, 3.0], [985, 2.0], [988, 1.4], [991, 0.8], [994, 0.5], [997, 0.32], [1000, 0.24], [1004, 0.2], [1009, 0.1], [1014, 0]]);
+const flareS = track([[963, 1.4], [968, 3.0], [974, 6.0], [982, 4.5], [988, 3.5], [994, 2.6], [1000, 2.2], [1009, 1.8]]);
 const flash = track([[963, 0.04], [966, 0.19], [969, 0.5], [972, 0.85], [974, 1.0], [976, 0.8], [979, 0.58], [982, 0.48], [985, 0.4], [988, 0.25], [991, 0.1], [994, 0.035], [997, 0.012], [1000, 0.004], [1003, 0]]);
-const opacity = track([[980, 0], [986, 0.45], [993, 1]]);
+const opacity = track([[978, 0], [984, 0.5], [990, 1]]);          // the emblem is up before the flare has gone
 const open = track([[984, 0, 'smooth'], [1008, 1]]);                 // the legs of the compass
 const ringP = track([[1000, 0, 'smooth'], [1040, 1]]);               // how much of the circle is drawn
 const ringLevel = track([[1000, 1.3], [1040, 1.3], [1075, 0.95], [1213, 0.85]]);

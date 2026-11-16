@@ -25,6 +25,9 @@ const FinalShader = {
     uGrain: { value: 0.02 },
     uFringe: { value: 0.012 },      // colour fringing at the frame corners (fraction of the frame)
     uGrade: { value: 1 },           // strength of the film grade (0 = neutral)
+    uContrast: { value: 0.62 },     // how far the display-space S-curve is pushed (0 = as it was)
+    uShadow: { value: 0.16 },       // how much the haze is dug out of the blacks (0 = milky, 1 = crushed)
+    uShoulder: { value: 3.2 },      // soft roll-off of the highlights into white
     uBars: { value: 0 },            // height of each letterbox bar as a fraction of the frame (0.128 = 2.39:1)
     uTint: { value: new THREE.Color(1, 1, 1) },
   },
@@ -36,6 +39,7 @@ const FinalShader = {
     varying vec2 vUv;
     uniform sampler2D tDiffuse;
     uniform float uAspect, uTime, uExposure, uFlash, uFade, uVignette, uGrain, uFringe, uGrade, uBars;
+    uniform float uContrast, uShadow, uShoulder;
     uniform vec4 uFlare[${MAX_FLARES}];
     uniform vec4 uFlareB[${MAX_FLARES}];
     uniform vec3 uFlareColor, uFlashColor, uTint;
@@ -103,11 +107,20 @@ const FinalShader = {
       col *= mix(vec3(1.0), vec3(1.035, 1.0, 0.93), uGrade * smoothstep(0.15, 0.9, lum));
       // soft shoulder: identity below 0.75, rolls off into white
       vec3 hi = max(col - 0.75, 0.0);
-      col = min(col, 0.75) + 0.25 * (1.0 - exp(-hi * 3.2));
+      col = min(col, 0.75) + 0.25 * (1.0 - exp(-hi * uShoulder));
       col *= uFade;
       col = mix(col * 12.92, 1.055 * pow(max(col, 0.0), vec3(1.0 / 2.4)) - 0.055, step(0.0031308, col));
-      // a little more contrast in the mid tones (display space), film grain, optional 2.39:1 bars
-      col = mix(col, col * col * (3.0 - 2.0 * col), 0.10 * uGrade);
+      // Contrast in display space. Ours came out milky next to the reference, whose shadows are much deeper, but the
+      // usual contrast about a fixed pivot drags a dark frame (the burst at f1000 is nearly all shadow) down to black:
+      // this is an S that is identity at 0 and at 1, faded out below middle grey, so it only steepens a frame that has
+      // the middle to steepen. The haze comes off the blacks multiplicatively for the same reason — black stays black.
+      float c = clamp(col.r * 0.2126 + col.g * 0.7152 + col.b * 0.0722, 0.0, 1.0);
+      float s = c * c * (3.0 - 2.0 * c);
+      col += (s - c) * uContrast * smoothstep(0.0, 0.12, c) * smoothstep(0.10, 0.45, c);
+      col = max(col, 0.0);
+      // the haze comes off the blacks multiplicatively, so black stays black
+      col *= 1.0 - uShadow * (1.0 - smoothstep(0.02, 0.45, c));
+      col = clamp(col, 0.0, 1.0);
       col += (hash2(vUv * vec2(1280.0, 720.0) + fract(uTime) * 91.7) - 0.5) * uGrain;
       col *= smoothstep(0.0, 0.004, min(vUv.y, 1.0 - vUv.y) - uBars);
       gl_FragColor = vec4(col, 1.0);
@@ -149,7 +162,7 @@ export class Stage {
 
     // per-frame state the shots write into
     this.flares = Array.from({ length: MAX_FLARES }, () => ({ x: 0, y: 0, i: 0, s: 1, ring: 0, ghost: 0, rot: 0, rays: 1 }));
-    this.post = { exposure: 1, flash: 0, fade: 1, vignette: 0.42, bloom: 0.45, bloomThreshold: 1.0, bloomRadius: 0.4 };
+    this.post = { exposure: 1, flash: 0, fade: 1, vignette: 0.42, bloom: 0.45, bloomThreshold: 1.0, bloomRadius: 0.4, contrast: 0.62, shadow: 0.16, shoulder: 3.2 };
     this.width = VIDEO_W;
     this.height = VIDEO_H;
   }
@@ -190,7 +203,7 @@ export class Stage {
     this.underMix = 0;
     for (const f of this.flares) { f.id = null; f.i = 0; f.s = 1; f.ring = 0; f.ghost = 0; f.rot = 0; f.rays = 1; }
     const p = this.post;
-    p.exposure = 1; p.flash = 0; p.fade = 1; p.vignette = 0.42; p.bloom = 0.45; p.bloomThreshold = 1.0; p.bloomRadius = 0.4; p.flashColor = null;
+    p.exposure = 1; p.flash = 0; p.fade = 1; p.vignette = 0.42; p.bloom = 0.45; p.bloomThreshold = 1.0; p.bloomRadius = 0.4; p.contrast = 0.62; p.shadow = 0.16; p.shoulder = 3.2; p.flashColor = null;
   }
 
   render(time) {
@@ -207,6 +220,9 @@ export class Stage {
     u.uFlash.value = p.flash;
     u.uFade.value = p.fade;
     u.uVignette.value = p.vignette;
+    u.uContrast.value = p.contrast ?? 0.62;
+    u.uShadow.value = p.shadow ?? 0.16;
+    u.uShoulder.value = p.shoulder ?? 3.2;
     this.bloom.strength = p.bloom;
     this.bloom.threshold = p.bloomThreshold;
     this.bloom.radius = p.bloomRadius;

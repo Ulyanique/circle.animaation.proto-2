@@ -293,6 +293,9 @@ varying vec3 vClip;          // clip-space x, y, w: where the fragment is in the
 uniform float uOpacity;
 uniform float uLevel;        // overall light level of the gold
 uniform float uSheen;        // strength of the view-dependent gradient on flat faces
+uniform float uToneContrast; // contrast of the facet tones themselves (the gold reads as gold, not as a wash)
+uniform float uGlass;        // strength of the glass response: a bright sky sheen where a face turns away from the eye
+uniform float uGlassTint;    // how far that sheen leans to the cool sky colour instead of the gold
 uniform vec3 uGlowColor;     // colour of the lit chamfers
 uniform float uGlowLevel;
 uniform vec4 uLights[3];     // xyz world position, w intensity (flare heads light the gold)
@@ -368,7 +371,12 @@ void main() {
   // tone of the facet, with a soft view dependent gradient so big flat faces are not dead flat
   vec3 R = reflect(-V, N);
   float sheen = 0.5 + 0.5 * sin(R.x * 2.3 + R.y * 3.1 + 0.6 + uTime * 0.45);
-  vec3 col = vColor * uLevel * mix(1.0, 0.55 + 0.9 * sheen, uSheen);
+  // The facet tone is a flat albedo, so a face turned away from everything comes out as pale as one facing the light
+  // and the gold turns into a milky wash (the reference has deep dark planes next to bright ones). Sinking the tone
+  // curve about a low pivot and letting the light and the rim put the highlights back restores that contrast.
+  vec3 tone = pow(max(vColor, 0.0), vec3(1.0 + uToneContrast));      // heavier curve: darker in the body, white stays white
+  vec3 col = tone * uLevel * mix(1.0, 0.55 + 0.9 * sheen, uSheen);
+  col *= 1.0 + uToneContrast * 0.55;                // (give a little of the brightness back at the top end)
 
   // curtain walls (aScreen = 3) are matte rock: no point lights, no specular, no glitter — just a dark monolith shaft
   vec3 lit = vec3(0.0);
@@ -391,6 +399,13 @@ void main() {
     // rim light: a hot halo where the light grazes the silhouette — monolith against the dark
     float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
     col += uGlowColor * rim * uRim * (0.25 + 0.75 * smoothstep(0.6, 1.4, uLevel + vGlow));
+
+    // Glass: a pane seen edge-on turns into a mirror of the sky, so the faces that fall away from the eye pick up a
+    // broad, cool sheen. This is what the reference has and a flat gold albedo cannot: bright panes next to dark ones,
+    // the body of a facet reading as a sheet rather than as a painted plane.
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
+    vec3 sky = mix(uGlowColor, vec3(0.62, 0.74, 1.0), uGlassTint);
+    col += sky * fres * uGlass * (0.35 + 0.65 * smoothstep(0.0, 0.5, uLevel));
 
     // glitter: a few needle-bright cells of a fine hash lattice flare up and fade over time — sparks, not confetti.
     // Only gold that already catches some light can throw sparks.
@@ -427,6 +442,9 @@ export function makeShardMaterial() {
       uLevel: { value: 1 },
       uOpacity: { value: 1 },
       uSheen: { value: 0.18 },
+      uToneContrast: { value: 0.15 },
+      uGlass: { value: 0.30 },
+      uGlassTint: { value: 0.55 },
       uGlowColor: { value: new THREE.Color(1.0, 0.86, 0.5) },
       uGlowLevel: { value: 1 },
       uLights: { value: [new THREE.Vector4(0, 0, 0, 0), new THREE.Vector4(0, 0, 0, 0), new THREE.Vector4(0, 0, 0, 0)] },   // w = intensity: off by default (a bare Vector4 has w = 1)
