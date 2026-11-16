@@ -1,3 +1,4 @@
+import { createBackgroundParticles } from './background-particles.js';
 import { exportFullHd, seekExportVideos } from './video-export.js';
 import { createGraphiteBackdrop } from './graphite-backdrop.js';
 import { capturePng, downloadFrame, frameFilename } from './frame-export.js';
@@ -55,6 +56,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x080705);
 scene.fog = new THREE.FogExp2(0x080705, 0.014);
 const graphiteBackdrop=createGraphiteBackdrop();scene.add(graphiteBackdrop);
+const backgroundParticles=createBackgroundParticles();scene.add(backgroundParticles);
 const camera = new THREE.PerspectiveCamera(49, innerWidth / innerHeight, 0.1, 320);
 const pmrem = new THREE.PMREMGenerator(renderer);
 // A black photographic studio with long softboxes, not the default room cubemap.
@@ -422,6 +424,7 @@ function render(t, dt=1/60){
  bloom.enabled=settings.bloom;bloom.strength=lerp(.3,.18,finish)*settings.bloomStrength;
  depthOfField.enabled=settings.dof;depthOfField.uniforms.aperture.value*=settings.dofStrength;
  contactShadows.enabled=settings.ao&&!mobile;vignette.enabled=settings.vignette;antialias.enabled=settings.smaa;
+ backgroundParticles.userData.update(camera,t,settings,renderer.getPixelRatio(),smooth(0,3,t)*(1-finish));
  edgeOrbits.userData.update(camera,t,settings,smooth(0,2,t)*(1-smooth(69.5,DURATION,t))*(1-.65*hero));
  finaleImpact.userData.update(t,camera,settings);
  composer.render();

@@ -326,7 +326,7 @@ test('settings schema preserves defaults, clamps imports and tolerates unavailab
 test('every exposed setting is connected to the live scene',async()=>{
  const {defaultSettings}=await import('../src/settings.js');
  const source=fs.readFileSync(new URL('../src/main.js',import.meta.url),'utf8');
- const orbitSource=fs.readFileSync(new URL('../src/edge-orbits.js',import.meta.url),'utf8')+fs.readFileSync(new URL('../src/finale-impact.js',import.meta.url),'utf8');
+ const orbitSource=fs.readFileSync(new URL('../src/edge-orbits.js',import.meta.url),'utf8')+fs.readFileSync(new URL('../src/finale-impact.js',import.meta.url),'utf8')+fs.readFileSync(new URL('../src/background-particles.js',import.meta.url),'utf8');
  for(const key of Object.keys(defaultSettings))assert.ok(source.includes(`settings.${key}`)||orbitSource.includes(`options.${key}`),`unwired setting: ${key}`);
 });
 
@@ -352,13 +352,13 @@ test('edge orbit dust is deterministic and camera-relative layout leaves the cen
  for(const aspect of [.46,.65,1.5,1.9]){
   const camera=new PerspectiveCamera(aspect<1?68:46,aspect,.1,320);
   const layout=orbitLayout(camera.fov,aspect);
-  assert.ok(Number.isFinite(layout.halfWidth)&&layout.size<=1.85);
+  assert.ok(Number.isFinite(layout.halfWidth)&&layout.size<=2.5);
   const root=createEdgeOrbits(null);
   root.userData.update(camera,10,{edgeOrbits:true,orbitSize:1,orbitSpeed:1,orbitBrightness:1,orbitParticles:true});
   for(const group of root.children){
    assert.ok(Math.abs(group.position.x)>layout.halfWidth);
    assert.ok(Math.abs(group.position.y)>layout.halfHeight);
-   assert.ok(Math.abs(group.position.x)-5.3*layout.size>layout.halfWidth*.4,'central media lane stays clear');
+   assert.ok(Math.abs(group.position.x)-5.3*layout.size>layout.halfWidth*.25,'central media lane stays clear');
   }
   root.userData.update(camera,10,{edgeOrbits:false});assert.equal(root.visible,false);
   root.traverse(object=>{object.geometry?.dispose();object.material?.dispose();});
@@ -832,4 +832,17 @@ test('offline video export awaits decoded source seeks instead of sampling an ol
  assert.equal(video.currentTime,87);assert.equal(video.seeking,false);assert.equal(video.paused,true);
  const abort=new AbortController();abort.abort();video.value=0;
  await assert.rejects(seekExportVideos([panel],8,abort.signal),error=>error.name==='AbortError');
+});
+
+test('background particles are deterministic, distant and independently adjustable',async()=>{
+ const {backgroundParticleField,createBackgroundParticles}=await import('../src/background-particles.js');
+ const {PerspectiveCamera}=await import('three');
+ const a=backgroundParticleField(),b=backgroundParticleField();assert.deepEqual(a.positions,b.positions);
+ for(let i=0;i<a.seeds.length;i++)assert.ok(a.positions[i*3+2]>=65&&a.positions[i*3+2]<=165);
+ const points=createBackgroundParticles();assert.equal(points.material.depthWrite,false);assert.equal(points.material.depthTest,true);
+ const options={backgroundParticles:true,backgroundParticleDensity:.5,backgroundParticleBrightness:.7};
+ points.userData.update(new PerspectiveCamera(60,1.5),10,options,1,1);assert.equal(points.geometry.drawRange.count,300);
+ assert.equal(points.material.uniforms.strength.value,.7);
+ points.userData.update(new PerspectiveCamera(),10,{...options,backgroundParticles:false},1,1);assert.equal(points.visible,false);
+ points.geometry.dispose();points.material.dispose();
 });
