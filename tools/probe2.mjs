@@ -1,0 +1,13 @@
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
+const browser = await puppeteer.launch({ args: [...chromium.args, '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'], executablePath: await chromium.executablePath(), headless: 'shell' });
+const page = await browser.newPage();
+const errors = [];
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text().slice(0, 500)); });
+page.on('pageerror', (e) => errors.push('PAGEERROR ' + (e.stack || e.message).slice(0, 700)));
+await page.goto('http://localhost:5173/?paused&nowarm&dpr=1', { waitUntil: 'load', timeout: 60000 });
+await page.waitForFunction('window.__ready === true', { timeout: 60000 });
+const expr = process.argv[2];
+console.log(JSON.stringify(await page.evaluate(expr), null, 0));
+console.log([...new Set(errors)].slice(0, 6).join('\n'));
+await browser.close();

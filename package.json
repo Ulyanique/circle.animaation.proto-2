@@ -1,0 +1,19 @@
+{
+  "name": "circle-animation-proto-2",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@mediabunny/aac-encoder": "^1.65.2",
+    "mediabunny": "^1.65.2",
+    "vite": "^8.3.7"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules
+dist
+.DS_Store
+*.log
+__pycache__
+
+# test files for the windows (tools/NOTES.md). Not every name with an underscore in front: cameras name their Adobe RGB
+# shots _DSC1234.JPG
+public/media/_test_*

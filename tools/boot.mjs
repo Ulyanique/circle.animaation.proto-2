@@ -1,0 +1,13 @@
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
+const url = process.argv[2] || 'http://localhost:5173/?paused&dpr=1';
+const browser = await puppeteer.launch({ args: chromium.args, executablePath: await chromium.executablePath(), headless: 'shell', defaultViewport: { width: 1280, height: 720 } });
+const page = await browser.newPage();
+const errors = [];
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.type() + ': ' + m.text().slice(0, 300)); });
+page.on('pageerror', (e) => errors.push('PAGEERROR ' + (e.stack || e.message).slice(0, 500)));
+const t0 = Date.now();
+await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+await page.waitForFunction('window.__ready === true', { timeout: 170000 });
+console.log('ready after', ((Date.now() - t0) / 1000).toFixed(1), 's;', 'messages:', [...new Set(errors)].slice(0, 8).join(' | ') || 'none');
+await browser.close();
