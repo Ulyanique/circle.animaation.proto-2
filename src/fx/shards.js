@@ -338,8 +338,8 @@ vec3 footage(int i, sampler2D tex) {
   vec2 uv = vec2(dot(d, uScrU[i]) / dot(uScrU[i], uScrU[i]), dot(d, uScrV[i]) / dot(uScrV[i], uScrV[i]));
   uv.y += uScrMix[i].w;
   if (uScrFixed[i] > 0.5) uv = vec2(vClip.x, -vClip.y) / vClip.z * 0.5 + 0.5;      // position in the picture, y down
-  // a placeholder still ends at its rectangle; own media is fitted to cover whatever part of the window the picture
-  // shows (core/slots.js), and past that its edge texels simply go on
+  // media is fitted to cover whatever part of the window the picture shows (core/slots.js), and past that its edge
+  // texels simply go on
   float inside = max(step(0.5, uScrOwn[i]), step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0));
   uv = vec2(dot(uScrA[i].xy, uv), dot(uScrA[i].zw, uv)) + uScrT[i];
   vec2 tuv = vec2(uv.x, 1.0 - uv.y);

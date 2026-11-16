@@ -108,7 +108,7 @@ export function startPlacer(player, openNow = false) {
   };
 
   const all = () => Object.values(slots).sort((a, b) => a.id.localeCompare(b.id));
-  const own = (r) => !!(r && r.place);      // the window shows media that can be placed, not a placeholder still
+  const own = (r) => !!(r && r.place);      // the window shows media that can be placed
   const cfgOf = (r) => r.cfg || mediaFor(r.name) || {};      // its line of media.js (also when the file did not open)
   const frame = () => clamp(timeToFrame(player.time), 1, LAST_FRAME);
   const userAt = (r, f) => r.users.find((u) => f >= u.ask.span[0] && f < u.ask.span[1] + 1) || null;      // the shot that draws it now
@@ -211,7 +211,7 @@ export function startPlacer(player, openNow = false) {
     say(entries.length > 1 ? `Сохранено в src/media.js: ${entries.map((e) => e.id).join(', ')}.` : 'Сохранено в src/media.js.');
   }
   /**
-   * Puts file `src` ('media/…'; null — back to the placeholder) into window r. The page is then loaded again (pictures
+   * Puts file `src` ('media/…'; null — the window goes bare) into window r. The page is then loaded again (pictures
    * are read at the start); what was moved in other windows is saved along.
    */
   async function assign(r, src, done, uploaded = false) {
@@ -265,7 +265,7 @@ export function startPlacer(player, openNow = false) {
     listKey = key;
     el.file.textContent = '';
     const add = (value, label) => el.file.appendChild(Object.assign(document.createElement('option'), { value, textContent: label }));
-    add('', CARD ? 'разметка 16:9 (?card)' : 'заглушка — кадр ролика');
+    add('', CARD ? 'разметка 16:9 (?card)' : 'пусто — окно без картинки');
     if (src && !server.files.some((f) => `media/${f.name}` === src)) add(src, src);
     for (const f of server.files) add(`media/${f.name}`, `${f.name} · ${megabytes(f.size)}`);
     el.file.value = src;
@@ -290,9 +290,9 @@ export function startPlacer(player, openNow = false) {
       el.vals.dataset.v = el.vals.textContent = '';
       el.fixed.checked = el.move.checked = false;
       put(el.line, src ? `${r.id}: { src: '${src}' },` : `${r.id}: { src: 'media/имя-файла.jpg' },`);
-      put(el.msg, note || (src ? `Файл ${src} не открылся — в окне осталась заглушка.`
-        : server.write ? `В окне ${r.id} — заглушка. Перетащите на него фото или видео с компьютера или выберите файл в списке.`
-          : `В окне ${r.id} — заглушка. Положите файл в public/media/ и добавьте в src/media.js такую строку.`));
+      put(el.msg, note || (src ? `Файл ${src} не открылся — окно осталось пустым.`
+        : server.write ? `В окне ${r.id} пусто. Перетащите на него фото или видео с компьютера или выберите файл в списке.`
+          : `В окне ${r.id} пусто. Положите файл в public/media/ и добавьте в src/media.js такую строку.`));
       return;
     }
     const p = placeAt(r, f);
@@ -386,7 +386,7 @@ export function startPlacer(player, openNow = false) {
     if (a === 'file') {
       const src = el.file.value || null;
       listKey = '';      // the list shows the file's state again if this does not go through
-      return assign(r, src, src ? `${src.replace(/^media\//, '')} — в окне ${r.id}.` : `В окне ${r.id} снова заглушка.`);
+      return assign(r, src, src ? `${src.replace(/^media\//, '')} — в окне ${r.id}.` : `Окно ${r.id} снова пустое.`);
     }
     if (!own(r)) return;
     if (a === 'fixed') { setFixed(r, e.target.checked); say(''); }

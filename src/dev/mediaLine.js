@@ -138,7 +138,7 @@ export function putLine(text, id, line) {
   return lines.join('\n');
 }
 
-/** Takes the entry of window `id` out of the text of src/media.js (the window goes back to its placeholder). */
+/** Takes the entry of window `id` out of the text of src/media.js (the window stays bare). */
 export function dropLine(text, id) {
   const { lines, at, end } = locate(text, id);
   if (at >= 0) lines.splice(at, end - at + 1);

@@ -1,7 +1,7 @@
 // Windows as slots: any photo or video can be put into any footage window (settings: src/media.js).
 //
-// A placeholder still is a picture in the texture space of ITS OWN window, cut from the reference video. Custom media
-// is fitted instead: it covers a box ("object-fit: cover") and x / y / zoom / rotate place it — like CSS
+// A window shows the media chosen in src/media.js, fitted: it covers a box ("object-fit: cover") and x / y / zoom /
+// rotate place it — like CSS
 // object-position, so no setting can open a gap at the window's edge. The box is the part of the window that the
 // picture ever shows (the camera often flies so close that a window is never seen whole); with `fixed` it is the
 // picture itself, and the window is a cut-out over media that stays put on the screen. `to` moves the numbers slowly
@@ -11,7 +11,7 @@
 import settings from '../media.js';
 import { FPS, VIDEO_W, VIDEO_H, clamp, lerp, touch } from './util.js';
 
-/** Slot ids in the order the windows appear -> name of the screen in the shot data (and of the placeholder still). */
+/** Slot ids in the order the windows appear -> name of the screen in the shot data. */
 export const SLOTS = {
   w01: 'workers', w02: 'closeup', w03: 'plant', w04: 'substation', w05: 'lineman', w06: 'helmet',
   w07: 'field', w08: 'pylons', w09: 'cabinet', w10: 'youngman', w11: 'turbines',
@@ -40,7 +40,7 @@ const chosen = choose(settings, true);
  * settings — the quickest way to see which part of a horizontal frame each window takes.
  */
 export const CARD = typeof location !== 'undefined' && new URLSearchParams(location.search).has('card');
-/** Settings of the custom media for a screen, or null (placeholder still). */
+/** Settings of the media for a screen, or null: the window has no line in media.js and stays bare. */
 export const mediaFor = (name) => chosen[name] || (CARD ? {} : null);
 export const isVideo = (src) => /\.(mp4|webm|m4v|mov|ogv)([?#].*)?$/i.test(src);
 
@@ -111,7 +111,7 @@ export function setFixed(r, on) {
  * Returns the per-frame fit [a, b, c, d, tx, ty] for custom media, or null. Valid once finishSlots() has run.
  */
 export function registerSlot(name, range, primary, media, ask) {
-  const r = registry[name] || (registry[name] = { id: ID[name] || name, name, f0: range[0], f1: range[1], aspect: 1, tilt: 0, kind: 'placeholder', users: [] });
+  const r = registry[name] || (registry[name] = { id: ID[name] || name, name, f0: range[0], f1: range[1], aspect: 1, tilt: 0, kind: 'none', users: [] });
   r.f0 = Math.min(r.f0, range[0]); r.f1 = Math.max(r.f1, range[1]);
   r.users.push({ primary, ask, own: !!media });
   if (!media) return null;
@@ -161,7 +161,7 @@ const TAIL = 16;      // frames a shot may still be on screen past its own range
 
 /**
  * Gives a window the cut that arrived late (core/assets.js `late()`). Until the film started, a window waited for its
- * video; a cut that was not there by then left the window on its placeholder still. This puts the window back to what
+ * video; a cut that was not there by then left the window bare. This puts the window back to what
  * it would have been had the cut arrived in time: the same placement, the same box, driven by the film's clock.
  * A window that already has its cut (or has no cut in media.js) is left alone. Returns true if the cut was taken.
  */
@@ -344,7 +344,7 @@ if (import.meta.hot) {
     for (const [name, cfg] of Object.entries(want)) {
       const was = chosen[name], r = registry[name];
       chosen[name] = cfg;
-      if (!r || !r.place) continue;      // its file did not load: the placeholder is on
+      if (!r || !r.place) continue;      // its file did not load: the window stays bare
       r.cfg = cfg;
       // a window whose line says the same as before keeps what is on the screen: it may have been moved in the
       // placement tool since, and not saved yet

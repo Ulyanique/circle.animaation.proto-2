@@ -366,7 +366,7 @@ export function makeShot(def, data, assets) {
         U.uScrU.value[i].copy(Ux).multiplyScalar(b[1] - b[0]);
         U.uScrV.value[i].copy(Vy).multiplyScalar(b[3] - b[2]);
       },
-      // a cut that arrived late (core/slots.js adoptLate) takes the place of the placeholder still on this screen
+      // a cut that arrived late (core/slots.js adoptLate) takes the place of the bare glass on this screen
       adopt: (tex, fit, fixed) => {
         const media = tex.userData.media;      // the cut itself (assets.footage is updated by the caller)
         U[i === 0 ? 'uTexA' : 'uTexB'].value = tex;
@@ -384,12 +384,11 @@ export function makeShot(def, data, assets) {
     if (fit) {
       U.uScrOwn.value[i] = media.kind === 'video' ? 2 : 1;
       U.uScrFixed.value[i] = fit.fixed ? 1 : 0;
-      // the unsharp mask is there for the placeholder stills (upscaled 720p frames); a photo of the user's own is
-      // shown as it is, unless its line in media.js asks for some (`sharpen`)
+      // the unsharp mask is off unless the line in media.js asks for some (`sharpen`): media is shown as it is
       U.uSharp.value[i] = clamp(Number(media.cfg.sharpen) || 0, 0, 1.5);
     }
     // the footage glides inside its facet: per-frame uv transform [a, b, c, d, tx, ty] measured by tools/uvtrack.py
-    // (it belongs to the placeholder still; custom media has its own `to` move)
+    // (it belongs to the reference film's stills, not to the cuts; custom media has its own `to` move)
     const uv = fit || sd.uv === false || !s.uv ? null : track(s.uv.rows.map((r, k) => [s.uv.f0 + k, r]), 'spline', true);
     scrFit[i] = fit; scrUv[i] = uv;
     return {
