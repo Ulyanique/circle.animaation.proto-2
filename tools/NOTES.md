@@ -93,6 +93,27 @@ at cuts, gaps, two trails at once).
 - Numbers of the current bake (`heroprobe.mjs 0.4`): head 10.6–26.7 px/f (final dash 38.4), acceleration ≤ 3.40 px/f²
   (dash 8.86), turn ≤ 13.6°/f (dash 25.1), tail ≥ 509 px once it has appeared, sharpest joint ≤ 36°.
 
+## The first frame (s01, f1–47)
+
+The light is not in yet at f1 (gain 0 until f2, 0.80 at f6), so the frame has to stand on its own. Measured against the
+original's frame 1 (`analyze.py` in the session's scratch tools): the original has 26 % near-black and two families of long
+edges (38° 49 %, 158° 38 %) that cross at about (44 %, 59 %); ours had 10 % near-black, one family (75° = 51 % of all
+long edges, plus 90°/180°) and its brightest patch was a 4 % flat fill (`e`) rather than a lit edge. What was changed, in
+`shots/s01.py` → `data/s01.json` (the camera was left alone — that was a separate option and was not taken):
+
+- tones: `bg` (58,48,29) → (32,26,15); `d` → (72,60,37); `g` → (54,43,27); `b` → (46,40,25); `c` → (132,113,66);
+  `e` (252,237,153, glow 0.3) → (224,205,124, glow 0.14, edge 1.9, bevel 0.035) — a face with a hot rim, no longer a fill.
+- `x1` — a slim dark blade on its own plane (P7, d 5.2, yaw −10) lying just behind the lit wedge's hypotenuse: it never
+  crosses the bright strip, and the strip stays continuous. What reads as a line is its rim (`edge` 3.0, `glow` 0.35).
+- `d2` — a thin bright bar on its own plane (P8, d 8.0, yaw −20) across the right facet, from 38 % / 10 % to 97 % / 69 %.
+- **Plane placement is the trap here.** `planes` are built in the camera of the annotation (at the origin), but the camera
+  of f1 stands at (0.87, 0.05, 0.72): a point lands about 760/d px further LEFT on the screen than its `at`. A first attempt
+  put a 50 px blade straight across the middle facets — it read as a thrown stick, and its bright rim crossed `strip`.
+  `planecheck.py`-style probing (or `vert.mjs` in the scratch tools) before believing an `at` is worth more than a render.
+- Checks: 47 frames differ from the render before the change, the other 1166 are bit-identical (`cmpdir.py`); frames 34–42
+  (the light passes behind a shard at f34–39) look at `d2` crossing the tail — the crossing reads as a crossing, not a jump.
+  The change is a deliberate departure from the original for f1–47, not a regression: `cmpdir.py` must show 47, not 0.
+
 ## Stills
 
 - `texgrid.py NAME [box|-] [scale] [src]` — a still with a pixel grid; `texclean.py NAME "shapes" [--view] [--radius=]
@@ -642,3 +663,7 @@ with the video tool in the dev server: 1,142.89 kB (gzip 366) — 0.3 kB more th
 slots' `fresh()`); the tool itself and mediabunny are not in it.
 With the sound tool (own music): 1,144.21 kB (gzip 366.10), CSS 3.27 kB — all 1213 frames still bit-identical
 to the render before it; boot 5.9 s, no console messages.
+
+The first frame of s01 (deeper shadow, `x1`, `d2`, a dimmer `e` — see "The first frame"): 47 frames differ from `base13`
+(f1–47, the whole shot) and 1166 are bit-identical to it. This is the one place where the pixel-identical rule is given up
+on purpose.
