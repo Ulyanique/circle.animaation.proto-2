@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export function backgroundParticleField(count=600){
+export function backgroundParticleField(count=1000){
  let seed=731;const next=()=>{seed=seed*16807%2147483647;return(seed-1)/2147483646;};
  const positions=new Float32Array(count*3),seeds=new Float32Array(count);
  for(let i=0;i<count;i++){positions.set([(next()-.5)*2.16,(next()-.5)*2.16,65+next()*100],i*3);seeds[i]=next();}
@@ -20,9 +20,9 @@ export function createBackgroundParticles(){
     float depth=position.z;
     gl_Position=projectionMatrix*vec4(p*span*depth,-depth,1.);
     float soft=step(.965,seed);
-    gl_PointSize=mix(1.1+seed*1.9,8.,soft)*pixelRatio;
+    gl_PointSize=mix(1.4+seed*2.8,13.,soft)*pixelRatio;
     float centre=mix(.38,1.,smoothstep(.15,.85,length(p)));
-    alpha=(.18+seed*.25)*centre*strength*mix(1.,.25,soft);
+    alpha=(.24+seed*.36)*centre*strength*mix(1.,.35,soft);
     warmth=seed;
    }`,
   fragmentShader:`varying float alpha;varying float warmth;

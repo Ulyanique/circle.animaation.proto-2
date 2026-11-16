@@ -358,7 +358,7 @@ test('edge orbit dust is deterministic and camera-relative layout leaves the cen
   for(const group of root.children){
    assert.ok(Math.abs(group.position.x)>layout.halfWidth);
    assert.ok(Math.abs(group.position.y)>layout.halfHeight);
-   assert.ok(Math.abs(group.position.x)-5.3*layout.size>layout.halfWidth*.25,'central media lane stays clear');
+   assert.ok(Math.abs(group.position.x)-5.3*layout.size>layout.halfWidth*.2,'central media lane stays clear');
   }
   root.userData.update(camera,10,{edgeOrbits:false});assert.equal(root.visible,false);
   root.traverse(object=>{object.geometry?.dispose();object.material?.dispose();});
@@ -841,8 +841,33 @@ test('background particles are deterministic, distant and independently adjustab
  for(let i=0;i<a.seeds.length;i++)assert.ok(a.positions[i*3+2]>=65&&a.positions[i*3+2]<=165);
  const points=createBackgroundParticles();assert.equal(points.material.depthWrite,false);assert.equal(points.material.depthTest,true);
  const options={backgroundParticles:true,backgroundParticleDensity:.5,backgroundParticleBrightness:.7};
- points.userData.update(new PerspectiveCamera(60,1.5),10,options,1,1);assert.equal(points.geometry.drawRange.count,300);
+ points.userData.update(new PerspectiveCamera(60,1.5),10,options,1,1);assert.equal(points.geometry.drawRange.count,500);
  assert.equal(points.material.uniforms.strength.value,.7);
  points.userData.update(new PerspectiveCamera(),10,{...options,backgroundParticles:false},1,1);assert.equal(points.visible,false);
  points.geometry.dispose();points.material.dispose();
+});
+
+test('wide screens scale media up rather than leaving a small distant card in empty space',async()=>{
+ const {mediaStageFit}=await import('../src/media-stage.js');
+ const regular=mediaStageFit(1.5),wide=mediaStageFit(1568/764);
+ assert.ok(wide.scale>regular.scale*1.3);assert.ok(wide.offset>regular.offset);
+ assert.ok(Math.abs(wide.offset/wide.scale-regular.offset/regular.scale)<1e-10,'camera corridor scales with media');
+});
+
+test('wide composition fits all ten source bounds and keeps the camera corridor clear',async()=>{
+ const {MediaPanel}=await import('../src/media-panels.js');const {mediaSources}=await import('../src/media-config.js');
+ const {createMediaGaze}=await import('../src/media-direction.js');const {travellingCameraPose}=await import('../src/choreography.js');
+ const {PerspectiveCamera,MeshPhysicalMaterial}=await import('three');
+ const material=new MeshPhysicalMaterial(),aspect=1568/764;
+ const panels=Array.from({length:10},(_,i)=>{const p=new MediaPanel(i,material,null,null);p.setViewportAspect(aspect);p.setDimensions(mediaSources[i].aspect);p.updateMatrixWorld(true);return p;});
+ const gaze=createMediaGaze(panels),camera=new PerspectiveCamera(60,aspect,.1,320);
+ for(const panel of panels){
+  const time=7.2+panel.index*5,pose=travellingCameraPose(time,18,5,-30);camera.position.fromArray(pose);camera.lookAt(...gaze(time,pose));camera.updateMatrixWorld();
+  for(const x of [-panel.width/2,panel.width/2])for(const y of [-panel.height/2,panel.height/2]){
+   const point=new Vector3(x,y,0).applyMatrix4(panel.matrixWorld).project(camera);assert.ok(Math.abs(point.x)<.99&&Math.abs(point.y)<.9,'source fits widescreen');
+  }
+  for(let t=time;t<time+5;t+=.025){const pose=travellingCameraPose(t,18,5,-30),local=panel.worldToLocal(new Vector3(...pose.slice(0,3)));assert.ok(!(Math.abs(local.z)<.75&&Math.abs(local.x)<panel.width/2+.45&&Math.abs(local.y)<panel.height/2+.45),'wide camera clearance');}
+  panel.traverse(object=>object.geometry?.dispose());panel.frame.material.dispose();panel.face.material.dispose();panel.back.material.dispose();
+ }
+ material.dispose();
 });

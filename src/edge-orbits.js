@@ -73,7 +73,7 @@ export function createEdgeOrbits(glowMap){
   const {halfWidth,halfHeight,size}=orbitLayout(camera.fov,camera.aspect,options.orbitSize);
   assemblies.forEach(({group,materials,dustObjects},index)=>{
    const sign=index===0?-1:1;
-   group.position.set(sign*(halfWidth+1.05*size),-sign*(halfHeight+1.05*size),-24);
+   group.position.set(sign*(halfWidth+.5*size),-sign*(halfHeight+.5*size),-24);
    group.scale.setScalar(size);group.rotation.set(.12*sign,.14*sign,sign*time*.045*options.orbitSpeed+index*.9);
    materials.forEach(([material,base])=>{material.opacity=base*options.orbitBrightness*visibility;});
    dustObjects.forEach(object=>{object.visible=options.orbitParticles;});

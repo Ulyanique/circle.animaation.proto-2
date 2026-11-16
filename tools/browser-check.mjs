@@ -27,7 +27,7 @@ const browser=await playwright.launch({
 const errors=[];
 try {
   const desktop=process.env.BROWSER_DESKTOP==='1';
-  const page=await browser.newPage({viewport:process.env.BROWSER_MOBILE==='1'?{width:390,height:844}:{width:1080,height:720},deviceScaleFactor:1,reducedMotion:'reduce',isMobile:!desktop,hasTouch:!desktop});
+  const page=await browser.newPage({viewport:process.env.BROWSER_WIDE==='1'?{width:1568,height:764}:process.env.BROWSER_MOBILE==='1'?{width:390,height:844}:{width:1080,height:720},deviceScaleFactor:1,reducedMotion:'reduce',isMobile:!desktop,hasTouch:!desktop});
   page.setDefaultTimeout(120000);
   page.on('pageerror',error=>errors.push(error.message));
   page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});

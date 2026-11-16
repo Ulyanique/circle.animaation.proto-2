@@ -446,3 +446,11 @@ Added a separate seeded background-particle layer (600 available points, 80% den
 Corner orbit scale increased again from 1.85 to 2.5 (~35%). Shifted corner centres outward by 1.05×scale to retain an open central quarter-lane while allowing larger arcs to fill more of the edges. Initial farther-out framing hid too much of the enlarged circles, so final placement was tightened and recaptured.
 
 60 tests/build pass, covering deterministic particle fields, depth bounds, density/disable settings and corner layout. Desktop portable Chromium captured 7.2 seconds after final framing, ten slots/zero errors. Particle composition was inspected before the final corner-centre adjustment. Existing bundle warning remains; no hardware FPS benchmark performed.
+
+### Wide-frame composition density
+
+Wide desktop aspect ratios now scale source sizes and lateral placement proportionally above 1.5 aspect (capped at 1.6×). At 1568×764 this makes cards about 37% larger in world dimensions than the previous wide view while preserving alternating sides/static facing and a clear camera lane. Portrait and ordinary 1.5-aspect staging are unchanged. This addresses the small-card-in-empty-wide-frame problem without zoom pulses or camera steering.
+
+Increased the available background field from 600 to 1,000 particles, with more visible fine motes and larger soft bokeh; existing density/brightness controls remain respected. Brought enlarged corner circle centres farther into frame (.5×scale offset) so more of the arcs participate in the composition; the central fifth-lane remains clear.
+
+62 tests/build pass, including all ten default media bounds fitting the 1568×764 reading view and wide camera clearance. Portable Chromium captured 6.2/7.2 seconds at that exact viewport, ten slots/zero errors; both inspected: larger card, visible floating particles and broader corner arcs. Test flag: `BROWSER_WIDE=1`. Existing bundle warning remains; real media and hardware motion review still required.
