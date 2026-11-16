@@ -25,7 +25,7 @@ const MOST = 1e8;      // bits per second: the file is put together in memory, a
 /**
  * Bits per second the picture's encoder is asked for. `level`: 0, 1 or 2. The film is hard on an encoder — grain,
  * dust and sparks over soft gradients of light — so the numbers are generous: at level 1 a 1920×1080 file at 24 frames
- * gets 16 Mbit/s (the reference video.mp4 spends 10.6 on 1280×720). It is a ceiling: an encoder that has nothing
+ * gets 16 Mbit/s (the reference film, 1280×720, spends 10.6). It is a ceiling: an encoder that has nothing
  * more to say stays below it (tools/NOTES.md).
  */
 export function pictureBitrate(width, height, fps, level = 1) {

@@ -298,7 +298,9 @@ export function makeShot(def, data, assets) {
     U.uScrU.value[i].fromArray(s.u);
     U.uScrV.value[i].fromArray(s.v);
     const tex = assets.footage[sd.tex || s.name];
-    const media = tex?.userData.media || null;      // a photo / video of the user's own (src/media.js) instead of the still
+    const media = tex?.userData.media || null;      // the photo / video of src/media.js on this window
+    // With no media there is no still to fall back on either: the window is bare glass (uScrOwn = 0), dark, and it takes
+    // the cut when core/slots.js adopts one that arrived late.
     if (tex) {
       U[i === 0 ? 'uTexA' : 'uTexB'].value = tex;
       U.uTexel.value[i].set(1 / (media ? media.width : tex.image.width), 1 / (media ? media.height : tex.image.height));

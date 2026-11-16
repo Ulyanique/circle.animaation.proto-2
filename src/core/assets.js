@@ -1,5 +1,8 @@
-// Asset loading: what the windows show (placeholder stills, or the photos / videos chosen in src/media.js) and the
-// picture that stands for the emblem of the final title (src/brand.js). (The soundtrack: core/soundtrack.js.)
+// Asset loading: what the windows show (the photos / videos chosen in src/media.js) and the picture that stands for
+// the emblem of the final title (src/brand.js). (The soundtrack: core/soundtrack.js.)
+//
+// There is no still to fall back on: a window whose media has not arrived yet is bare glass, dark, and takes the cut
+// as soon as it can be played (see loadVideo's `late`).
 
 import * as THREE from 'three';
 import { mediaFor, isVideo, CARD } from './slots.js';
@@ -46,7 +49,7 @@ export function restorePhotos() {
   for (const p of photos) { try { develop(p.texture, p.img); } catch (e) { console.warn('photo not restored', e); } }
 }
 
-/** A photo from public/ (src/media.js). Resolves to null if it cannot be loaded — the placeholder then stays. */
+/** A photo from public/ (src/media.js). Resolves to null if it cannot be loaded — the window then stays bare. */
 function loadPhoto(loader, cfg) {
   return new Promise((resolve) => {
     loader.load(urlOf(cfg.src), (t) => {
@@ -57,13 +60,13 @@ function loadPhoto(loader, cfg) {
       photos.push({ texture: t, img });
       t.userData.media = { kind: 'photo', cfg, width, height };
       resolve(t);
-    }, undefined, () => { console.warn(`media.js: cannot load ${cfg.src} — the placeholder is shown instead`); resolve(null); });
+    }, undefined, () => { console.warn(`media.js: cannot load ${cfg.src} — the window stays bare`); resolve(null); });
   });
 }
 
 /**
  * A video (src/media.js): muted, parked on the frame its window opens with, driven later by core/slots.js.
- * Resolves to null if it cannot be played — the placeholder then stays.
+ * Resolves to null if it cannot be played — the window then stays bare.
  * The returned promise also carries `late()`: see below, it hands the cut over once it has arrived.
  */
 function loadVideo(cfg) {
@@ -75,8 +78,8 @@ function loadVideo(cfg) {
   let settle = () => {};      // defined below: parks the video on the frame its window opens with
   /**
    * The film is not held back by a cut that has not arrived, but the cut is not given up on either: until the film
-   * starts the window waits for it (`settle`); after that the window shows its placeholder still and takes the cut as
-   * soon as it can be played — a window is often half a minute of film away, and its cut may still be on the way.
+   * starts the window is bare and takes the cut as soon as it can be played — a window is often half a minute of film
+   * away, and its cut may still be on the way.
    * A video that cannot be played at all (a 404, a codec the browser has none of) is a different matter: `late()`
    * gives up on it after the browser has said so, so it is not met again at every frame.
    */
@@ -110,12 +113,12 @@ function loadVideo(cfg) {
       if (done) return;
       done = true; clearTimeout(timer);
       el.pause();
-      if (!ok || !el.videoWidth) { console.warn(`media.js: cannot play ${cfg.src} — the placeholder is shown instead`); resolve(null); return; }
+      if (!ok || !el.videoWidth) { console.warn(`media.js: cannot play ${cfg.src} — the window stays bare`); resolve(null); return; }
       handedOver = true;
       resolve(take());
     };
     settle = () => park(() => finish(true), () => finish(false));
-    // a slow connection must not hold the film back for ever: the placeholder still is shown and the cut is adopted
+    // a slow connection must not hold the film back for ever: the window stays bare and the cut is adopted
     // later by `late()` (a video that is already showing a frame is good enough as it is)
     const timer = setTimeout(() => { if (el.readyState >= 1) finish(true); else { done = true; clearTimeout(timer); resolve(null); } }, 12000);
     el.addEventListener('loadeddata', () => { if (!done) settle(); }, { once: true });
@@ -126,7 +129,7 @@ function loadVideo(cfg) {
   });
   /**
    * The cut arrived after the film had started: `onReady(texture)` is called once it can stand on its opening frame.
-   * Nothing is given up on meanwhile — the window keeps its placeholder still for as long as it takes — and a file the
+   * Nothing is given up on meanwhile — the window stays bare for as long as it takes — and a file the
    * browser cannot play at all is simply never handed over (the window keeps the still for good).
    */
   promise.late = (onReady) => {
@@ -276,22 +279,11 @@ export function loadEmblem(src, anew = false) {
   });
 }
 
-function loadTexture(loader, url) {
-  return new Promise((resolve) => {
-    loader.load(url, (t) => {
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 16;      // the windows are seen at grazing angles; the renderer clamps this to what the GPU can do
-      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-      resolve(t);
-    }, undefined, () => resolve(null));
-  });
-}
-
 /**
  * `toGpu(texture)`: puts a texture on the GPU at once — with it a photo's canvas is given back as soon as it is there.
  * `emblem`: the picture of the title's emblem, if src/brand.js names one.
  * `late`: screen name -> `late(onReady)` of a cut that had not arrived when the film started (see loadVideo); the
- * window keeps its placeholder still until it does.
+ * window is bare until it does.
  */
 export async function loadAssets(names, toGpu = null, { emblem = null } = {}) {
   upload = toGpu;
@@ -303,7 +295,8 @@ export async function loadAssets(names, toGpu = null, { emblem = null } = {}) {
     const video = !cfg || CARD || !isVideo(cfg.src) ? null : loadVideo(cfg);
     const own = !cfg ? null : CARD ? makeCard(cfg) : video ? await video : await loadPhoto(loader, cfg);
     if (video && !own) late[n] = video.late;      // (a cut that did arrive has nothing to hand over)
-    footage[n] = own || await loadTexture(loader, `${base}footage/${n}.jpg`);
+    // no still to fall back on: a window with nothing to show is bare glass, and takes its cut when `late` hands it over
+    if (own) footage[n] = own;
   }));
   return { footage, emblem: await picture, late };
 }

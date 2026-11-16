@@ -318,9 +318,9 @@ uniform vec4 uScrMix[2];     // x reveal 0..1, y sepia 0..1, z brightness, w uv 
 uniform vec4 uScrA[2];       // footage moving inside its facet: texture uv = mat2(A.xy, A.zw) * uv + T
 uniform vec2 uScrT[2];
 uniform vec3 uSepia;
-uniform vec2 uTexel[2];      // size of one texel of each footage still
-uniform float uSharp[2];     // unsharp mask on the footage, per screen (the stills come from a 720p source)
-uniform float uScrOwn[2];    // 0: placeholder still, 1: a photo of the user's own (src/media.js), 2: a video
+uniform vec2 uTexel[2];      // size of one texel of each window's picture
+uniform float uSharp[2];     // unsharp mask on the footage, per screen
+uniform float uScrOwn[2];    // 0: bare glass (nothing has arrived), 1: a photo, 2: a video — both from src/media.js
 uniform float uScrFixed[2];  // 1: own media is fixed to the picture and the window is a cut-out over it (fixed: true in media.js)
 
 // Photos are decoded from sRGB by the GPU. Video frames are not — three.js uploads them as plain RGBA8 (an sRGB upload
@@ -415,9 +415,12 @@ void main() {
     col += uGlowColor * tw * uSpark * step(0.78, gh) * smoothstep(0.1, 0.45, lum * uLevel);
   }
 
-  // footage on screen facets
+  // footage on screen facets. A window whose media has not arrived has nothing to sample: it stays bare glass — the
+  // sheen, the rim and the filming light that the facet already has — rather than showing a black rectangle.
   if (vScreen > 0.5 && vScreen < 2.5) {
+    float own = vScreen < 1.5 ? uScrOwn[0] : uScrOwn[1];
     vec3 f = vScreen < 1.5 ? footage(0, uTexA) : footage(1, uTexB);
+    f = mix(col, f, step(0.5, own));      // (no picture: keep the glass)
     // the keyed reveal is perceptual: mixing in linear light with the key itself would put most of the visible change
     // into the first frame or two (the footage would pop in and then barely move)
     float reveal = pow(vScreen < 1.5 ? uScrMix[0].x : uScrMix[1].x, 2.2);

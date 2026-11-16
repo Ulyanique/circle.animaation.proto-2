@@ -1,4 +1,5 @@
-// «Янтарный циркуль» — real-time three.js recreation of the reference video (video.mp4).
+// «Янтарный циркуль» — real-time three.js recreation of the reference film. The windows show the cuts of public/media
+// (src/media.js) and nothing else: no still stands in for a cut that has not loaded.
 
 import { Stage } from './core/stage.js';
 import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame, touch, touched } from './core/util.js';
