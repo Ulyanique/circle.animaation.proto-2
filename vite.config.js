@@ -55,6 +55,9 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    // the preview is served from this port: if something else holds it, fail loudly instead of quietly moving to the
+    // next one (the tunnel then points at a closed port and the page looks broken for no visible reason)
+    strictPort: true,
     // allow tunnelled / proxied preview hosts
     allowedHosts: true,
   },
