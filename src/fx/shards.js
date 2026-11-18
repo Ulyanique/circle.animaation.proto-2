@@ -293,6 +293,9 @@ varying vec3 vClip;          // clip-space x, y, w: where the fragment is in the
 uniform float uOpacity;
 uniform float uLevel;        // overall light level of the gold
 uniform float uSheen;        // strength of the view-dependent gradient on flat faces
+uniform float uToneContrast; // contrast of the facet tones themselves (the gold reads as gold, not as a wash)
+uniform float uGlass;        // strength of the glass response: a bright sky sheen where a face turns away from the eye
+uniform float uGlassTint;    // how far that sheen leans to the cool sky colour instead of the gold
 uniform vec3 uGlowColor;     // colour of the lit chamfers
 uniform float uGlowLevel;
 uniform vec4 uLights[3];     // xyz world position, w intensity (flare heads light the gold)
@@ -315,9 +318,9 @@ uniform vec4 uScrMix[2];     // x reveal 0..1, y sepia 0..1, z brightness, w uv 
 uniform vec4 uScrA[2];       // footage moving inside its facet: texture uv = mat2(A.xy, A.zw) * uv + T
 uniform vec2 uScrT[2];
 uniform vec3 uSepia;
-uniform vec2 uTexel[2];      // size of one texel of each footage still
-uniform float uSharp[2];     // unsharp mask on the footage, per screen (the stills come from a 720p source)
-uniform float uScrOwn[2];    // 0: placeholder still, 1: a photo of the user's own (src/media.js), 2: a video
+uniform vec2 uTexel[2];      // size of one texel of each window's picture
+uniform float uSharp[2];     // unsharp mask on the footage, per screen
+uniform float uScrOwn[2];    // 0: bare glass (nothing has arrived), 1: a photo, 2: a video — both from src/media.js
 uniform float uScrFixed[2];  // 1: own media is fixed to the picture and the window is a cut-out over it (fixed: true in media.js)
 
 // Photos are decoded from sRGB by the GPU. Video frames are not — three.js uploads them as plain RGBA8 (an sRGB upload
@@ -335,8 +338,8 @@ vec3 footage(int i, sampler2D tex) {
   vec2 uv = vec2(dot(d, uScrU[i]) / dot(uScrU[i], uScrU[i]), dot(d, uScrV[i]) / dot(uScrV[i], uScrV[i]));
   uv.y += uScrMix[i].w;
   if (uScrFixed[i] > 0.5) uv = vec2(vClip.x, -vClip.y) / vClip.z * 0.5 + 0.5;      // position in the picture, y down
-  // a placeholder still ends at its rectangle; own media is fitted to cover whatever part of the window the picture
-  // shows (core/slots.js), and past that its edge texels simply go on
+  // media is fitted to cover whatever part of the window the picture shows (core/slots.js), and past that its edge
+  // texels simply go on
   float inside = max(step(0.5, uScrOwn[i]), step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0));
   uv = vec2(dot(uScrA[i].xy, uv), dot(uScrA[i].zw, uv)) + uScrT[i];
   vec2 tuv = vec2(uv.x, 1.0 - uv.y);
@@ -368,7 +371,12 @@ void main() {
   // tone of the facet, with a soft view dependent gradient so big flat faces are not dead flat
   vec3 R = reflect(-V, N);
   float sheen = 0.5 + 0.5 * sin(R.x * 2.3 + R.y * 3.1 + 0.6 + uTime * 0.45);
-  vec3 col = vColor * uLevel * mix(1.0, 0.55 + 0.9 * sheen, uSheen);
+  // The facet tone is a flat albedo, so a face turned away from everything comes out as pale as one facing the light
+  // and the gold turns into a milky wash (the reference has deep dark planes next to bright ones). Sinking the tone
+  // curve about a low pivot and letting the light and the rim put the highlights back restores that contrast.
+  vec3 tone = pow(max(vColor, 0.0), vec3(1.0 + uToneContrast));      // heavier curve: darker in the body, white stays white
+  vec3 col = tone * uLevel * mix(1.0, 0.55 + 0.9 * sheen, uSheen);
+  col *= 1.0 + uToneContrast * 0.55;                // (give a little of the brightness back at the top end)
 
   // curtain walls (aScreen = 3) are matte rock: no point lights, no specular, no glitter — just a dark monolith shaft
   vec3 lit = vec3(0.0);
@@ -392,6 +400,13 @@ void main() {
     float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
     col += uGlowColor * rim * uRim * (0.25 + 0.75 * smoothstep(0.6, 1.4, uLevel + vGlow));
 
+    // Glass: a pane seen edge-on turns into a mirror of the sky, so the faces that fall away from the eye pick up a
+    // broad, cool sheen. This is what the reference has and a flat gold albedo cannot: bright panes next to dark ones,
+    // the body of a facet reading as a sheet rather than as a painted plane.
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
+    vec3 sky = mix(uGlowColor, vec3(0.62, 0.74, 1.0), uGlassTint);
+    col += sky * fres * uGlass * (0.35 + 0.65 * smoothstep(0.0, 0.5, uLevel));
+
     // glitter: a few needle-bright cells of a fine hash lattice flare up and fade over time — sparks, not confetti.
     // Only gold that already catches some light can throw sparks.
     vec3 gq = floor(R * 90.0);
@@ -400,9 +415,12 @@ void main() {
     col += uGlowColor * tw * uSpark * step(0.78, gh) * smoothstep(0.1, 0.45, lum * uLevel);
   }
 
-  // footage on screen facets
+  // footage on screen facets. A window whose media has not arrived has nothing to sample: it stays bare glass — the
+  // sheen, the rim and the filming light that the facet already has — rather than showing a black rectangle.
   if (vScreen > 0.5 && vScreen < 2.5) {
+    float own = vScreen < 1.5 ? uScrOwn[0] : uScrOwn[1];
     vec3 f = vScreen < 1.5 ? footage(0, uTexA) : footage(1, uTexB);
+    f = mix(col, f, step(0.5, own));      // (no picture: keep the glass)
     // the keyed reveal is perceptual: mixing in linear light with the key itself would put most of the visible change
     // into the first frame or two (the footage would pop in and then barely move)
     float reveal = pow(vScreen < 1.5 ? uScrMix[0].x : uScrMix[1].x, 2.2);
@@ -427,6 +445,9 @@ export function makeShardMaterial() {
       uLevel: { value: 1 },
       uOpacity: { value: 1 },
       uSheen: { value: 0.18 },
+      uToneContrast: { value: 0.15 },
+      uGlass: { value: 0.30 },
+      uGlassTint: { value: 0.55 },
       uGlowColor: { value: new THREE.Color(1.0, 0.86, 0.5) },
       uGlowLevel: { value: 1 },
       uLights: { value: [new THREE.Vector4(0, 0, 0, 0), new THREE.Vector4(0, 0, 0, 0), new THREE.Vector4(0, 0, 0, 0)] },   // w = intensity: off by default (a bare Vector4 has w = 1)

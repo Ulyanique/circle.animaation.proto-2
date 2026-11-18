@@ -1,9 +1,10 @@
-// «Янтарный циркуль» — real-time three.js recreation of the reference video (video.mp4).
+// «Янтарный циркуль» — real-time three.js recreation of the reference film. The windows show the cuts of public/media
+// (src/media.js) and nothing else: no still stands in for a cut that has not loaded.
 
 import { Stage } from './core/stage.js';
 import { DURATION, FPS, LAST_FRAME, clamp, smoother, timeToFrame, touch, touched } from './core/util.js';
 import { loadAssets, restorePhotos } from './core/assets.js';
-import { syncVideos, finishSlots } from './core/slots.js';
+import { syncVideos, finishSlots, adoptLate } from './core/slots.js';
 import { soundtrack, SOUND } from './core/soundtrack.js';
 import { buildShots, linkShots, FOOTAGE } from './shots/index.js';
 import { makeHero } from './fx/hero.js';
@@ -242,12 +243,31 @@ let scope = params.has('scope');
 function setScope(on) { scope = on; stage.final.uniforms.uBars.value = on ? (1 - (16 / 9) / 2.39) / 2 : 0; touch(); }
 setScope(scope);
 
+/**
+ * Cuts that had not arrived when the film started. The windows open on their placeholder stills and take their videos
+ * the moment those can be played: a cut is 2–70 MB, and a window is often half a minute of film away, so a video that
+ * missed the 12 s deadline of core/assets.js (loadVideo) must still not be given up on. Nothing is polled: each cut
+ * says when it is ready, and a file the browser cannot play never says so (its window keeps the still for good).
+ */
+function adoptCuts(assets) {
+  for (const [name, late] of Object.entries(assets.late || {})) {
+    late((tex) => {
+      try { stage.renderer.initTexture(tex); } catch (e) { console.warn('media.js: late cut', name, e); }
+      if (!adoptLate(name, tex)) return;
+      assets.footage[name] = tex;      // the shots and the tools read the windows' pictures from here
+      console.info(`media.js: ${name} took its video (it arrived after the film started)`);
+      touch();
+    });
+  }
+}
+
 // ---- boot -----------------------------------------------------------------------------------
 stage.renderer.domElement.addEventListener('webglcontextrestored', () => { restorePhotos(); touch(); });      // after three.js's own listener
 loadAssets(FOOTAGE, (t) => stage.renderer.initTexture(t), { emblem: TITLE.image }).then((assets) => {
   player.shots = buildShots(assets, stage);
   player.links = linkShots(player.shots);
   finishSlots(player.links);      // what each window shows of itself is known only now, with the flights linked
+  adoptCuts(assets);              // cuts that were still on their way when the film started
   for (const s of player.shots) stage.scene.add(s.group);
   soundtrack.open(() => player.time);      // muted until the user turns the sound on
 
